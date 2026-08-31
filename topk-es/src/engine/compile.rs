@@ -105,16 +105,16 @@ pub fn count(schema: &Schema, query: Option<GateQuery>) -> Result<TopkQuery, Err
 fn lower(
     schema: &Schema,
     req: &SearchRequest,
-    compiled: CompiledQuery,
+    CompiledQuery { gate, score }: CompiledQuery,
     knn: bool,
     limit: u64,
 ) -> Result<TopkQuery, Error> {
-    let score = compiled.score;
-    let has_bm25 = score.bm25.is_some();
-    let bm25 = has_bm25.then(|| fns::bm25_score(None, None).into());
-    let query = match score.bm25 {
-        Some(text) => filter(text).filter(compiled.gate),
-        None => filter(compiled.gate),
+    let (query, bm25) = match score.bm25 {
+        Some(text) => (
+            filter(text).filter(gate),
+            Some(fns::bm25_score(None, None).into()),
+        ),
+        None => (filter(gate), None),
     };
 
     let (query, ann_term) = ann_score(query, schema, &score.anns)?;
