@@ -13,6 +13,6 @@ mod value;
 pub enum Expr {
     Literal(Value),
     Logical(LogicalExpr),
-    Function(FunctionExpr),
     Text(TextExpr),
+    Function(FunctionExpr),
 }

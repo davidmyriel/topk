@@ -1,6 +1,7 @@
 use crate::expr::aggregate::AggregateExpr;
 use crate::expr::filter::FilterExpr;
 use crate::expr::logical::LogicalExpr;
+use crate::expr::select::SelectExpr;
 use crate::expr::sort::SortExpr;
 use pyo3::prelude::*;
 use std::collections::HashMap;
@@ -9,7 +10,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub enum Stage {
     Select {
-        exprs: HashMap<String, LogicalExpr>,
+        exprs: HashMap<String, SelectExpr>,
     },
     Filter {
         expr: FilterExpr,

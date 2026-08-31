@@ -1,13 +1,13 @@
 use crate::expr::{
     aggregate::AggregateExpression, filter::FilterExpression, logical::LogicalExpression,
-    sort::SortExpr,
+    select::SelectExpression, sort::SortExpr,
 };
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum Stage {
     Select {
-        exprs: HashMap<String, LogicalExpression>,
+        exprs: HashMap<String, SelectExpression>,
     },
     Filter {
         expr: FilterExpression,

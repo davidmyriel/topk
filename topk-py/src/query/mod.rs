@@ -6,6 +6,7 @@ use crate::expr::function::FunctionExpr;
 use crate::expr::logical::{
     BinaryOperator, LogicalExpr, LogicalExprUnion, NaryOperator, UnaryOperator,
 };
+use crate::expr::select::SelectExprUnion;
 use crate::expr::text::{Term, TextExpr};
 use crate::module;
 use pyo3::exceptions::PyValueError;
@@ -56,7 +57,7 @@ pub fn pymodule(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[pyo3(signature = (*args, **kwargs))]
 pub fn select(
     args: Vec<String>,
-    kwargs: Option<HashMap<String, LogicalExprUnion>>,
+    kwargs: Option<HashMap<String, SelectExprUnion>>,
 ) -> PyResult<Query> {
     Ok(Query::new().select(args, kwargs)?)
 }

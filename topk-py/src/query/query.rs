@@ -1,6 +1,7 @@
 use crate::expr::aggregate::AggregateExpr;
 use crate::expr::filter::FilterExprUnion;
 use crate::expr::logical::{LogicalExpr, LogicalExprUnion};
+use crate::expr::select::{SelectExpr, SelectExprUnion};
 use crate::expr::sort::{SortExpr, SortExprsUnion, SortOrder};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
@@ -91,19 +92,28 @@ impl Query {
     pub fn select(
         &self,
         args: Vec<String>,
-        kwargs: Option<HashMap<String, LogicalExprUnion>>,
+        kwargs: Option<HashMap<String, SelectExprUnion>>,
     ) -> PyResult<Self> {
         let exprs = {
             let mut exprs = HashMap::new();
 
             // apply `*args`
             for key in args {
-                exprs.insert(key.clone(), LogicalExpr::Field { name: key });
+                exprs.insert(
+                    key.clone(),
+                    SelectExpr::Logical(LogicalExpr::Field { name: key }),
+                );
             }
 
             // apply `**kwargs`
             for (key, value) in kwargs.unwrap_or_default() {
-                exprs.insert(key, value.into());
+                exprs.insert(
+                    key.clone(),
+                    match value {
+                        SelectExprUnion::Logical(expr) => SelectExpr::Logical(expr),
+                        SelectExprUnion::Function(expr) => SelectExpr::Function(expr),
+                    },
+                );
             }
 
             exprs

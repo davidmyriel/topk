@@ -9,6 +9,7 @@ use crate::{
         aggregate::AggregateExpression,
         filter::FilterExpression,
         logical::{BinaryOperator, LogicalExpression, NaryOp, Ordered, UnaryOperator},
+        select::SelectExpression,
     },
     query::{query::Query, stage::Stage},
 };
@@ -20,11 +21,13 @@ use std::collections::HashMap;
 pub fn select(
     #[napi(ts_arg_type = "Record<string, LogicalExpression | FunctionExpression>")] exprs: HashMap<
         String,
-        LogicalExpression,
+        SelectExpression,
     >,
 ) -> Query {
     Query {
-        stages: vec![Stage::Select { exprs }],
+        stages: vec![Stage::Select {
+            exprs: exprs.into_iter().map(|(k, v)| (k, v.into())).collect(),
+        }],
     }
 }
 

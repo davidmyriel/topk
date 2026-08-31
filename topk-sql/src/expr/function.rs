@@ -403,7 +403,7 @@ impl FromSql<SqlFunction> for Value {
         let name = func.name();
         match Expr::try_from(func)? {
             Expr::Literal(v) => Ok(v),
-            Expr::Logical(_) | Expr::Function(_) | Expr::Text(_) => {
+            Expr::Logical(_) | Expr::Text(_) | Expr::Function(_) => {
                 sql_unsupported!("`{name}` does not produce a Value")
             }
         }
@@ -415,12 +415,12 @@ impl FromSql<SqlFunction> for LogicalExpr {
         let name = func.name();
         match Expr::try_from(func)? {
             Expr::Logical(expr) => Ok(expr),
-            Expr::Function(func) => Ok(LogicalExpr::function(func)),
             Expr::Literal(value) => Ok(LogicalExpr::literal(value)),
             Expr::Text(_) => sql_unsupported!(
                 "`{name}` is a text filter function — only valid in WHERE (e.g. \
                  `WHERE {name}('query', field)`)"
             ),
+            Expr::Function(func) => Ok(LogicalExpr::function(func)),
         }
     }
 }
