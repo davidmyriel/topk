@@ -178,10 +178,11 @@ impl TryFrom<SqlFunction> for Expr {
                 let field = field.as_ident().ok_or_else(|| {
                     Error::Invalid(format!("{name}: field must be an identifier"))
                 })?;
-                Self::Logical(
-                    FunctionExpr::vector_distance(field, Value::from_sql(query)?, skip_refine)
-                        .into(),
-                )
+                Self::function(FunctionExpr::vector_distance(
+                    field,
+                    Value::from_sql(query)?,
+                    skip_refine,
+                ))
             }
             "multi_vector_distance" => {
                 let (field, query, candidates) = match args.len() {
@@ -204,19 +205,20 @@ impl TryFrom<SqlFunction> for Expr {
                 let field = field.as_ident().ok_or_else(|| {
                     Error::Invalid(format!("{name}: field must be an identifier"))
                 })?;
-                Self::Logical(
-                    FunctionExpr::multi_vector_distance(field, Value::from_sql(query)?, candidates)
-                        .into(),
-                )
+                Self::function(FunctionExpr::multi_vector_distance(
+                    field,
+                    Value::from_sql(query)?,
+                    candidates,
+                ))
             }
             "bm25_score" => match args.len() {
-                0 => Self::Logical(FunctionExpr::bm25_score(None, None).into()),
+                0 => Self::function(FunctionExpr::bm25_score(None, None)),
                 2 => {
                     let [b, k1]: [SqlExpr; 2] = exact(args, &name)?;
-                    Self::Logical(
-                        FunctionExpr::bm25_score(Some(f32_literal(b)?), Some(f32_literal(k1)?))
-                            .into(),
-                    )
+                    Self::function(FunctionExpr::bm25_score(
+                        Some(f32_literal(b)?),
+                        Some(f32_literal(k1)?),
+                    ))
                 }
                 n => sql_invalid!("{name}: expected 0 or 2 args, got {n}"),
             },
@@ -228,7 +230,7 @@ impl TryFrom<SqlFunction> for Expr {
                 let field = field.as_ident().ok_or_else(|| {
                     Error::Invalid(format!("{name}: field must be an identifier"))
                 })?;
-                Self::Logical(FunctionExpr::semantic_similarity(field, query).into())
+                Self::function(FunctionExpr::semantic_similarity(field, query))
             }
             _ => return Err(Error::UnknownFunction(name)),
         })
