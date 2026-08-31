@@ -31,6 +31,7 @@ impl From<SortOrder> for topk_rs::proto::v1::data::stage::sort_stage::SortOrder 
 
 /// An expression to sort by with its sort order.
 #[napi(object, namespace = "query")]
+#[derive(Debug, Clone)]
 pub struct SortExpr {
     /// The expression to sort by.
     #[napi(ts_type = "LogicalExpression | FunctionExpression")]
@@ -57,20 +58,5 @@ impl FromNapiValue for SortArg {
         Ok(SortArg::Single(unsafe {
             LogicalExpression::from_napi_value(env, value)?
         }))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SortExpression {
-    pub expr: LogicalExpression,
-    pub order: SortOrder,
-}
-
-impl From<SortExpr> for SortExpression {
-    fn from(se: SortExpr) -> Self {
-        SortExpression {
-            expr: se.expr,
-            order: se.order,
-        }
     }
 }

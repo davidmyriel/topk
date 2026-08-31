@@ -808,9 +808,9 @@ lift!(
     sub(other: Numeric),
     mul(other: Numeric),
     div(other: Numeric),
-    coalesce(other: Numeric),
     min(other: Ordered),
     max(other: Ordered),
+    coalesce(other: Numeric),
     // Unary operators
     is_null(),
     is_not_null(),

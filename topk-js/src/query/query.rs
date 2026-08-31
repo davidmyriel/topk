@@ -6,7 +6,7 @@ use crate::expr::{
     filter::FilterExpression,
     logical::LogicalExpression,
     select::SelectExpression,
-    sort::{SortArg, SortExpression, SortOrder},
+    sort::{SortArg, SortExpr, SortOrder},
     text::{Term, TextExpression},
 };
 use napi::bindgen_prelude::*;
@@ -75,7 +75,7 @@ impl Query {
         };
 
         new_query.stages.push(Stage::Sort {
-            exprs: vec![SortExpression {
+            exprs: vec![SortExpr {
                 expr,
                 order: match asc.unwrap_or(false) {
                     true => SortOrder::Asc,
@@ -119,7 +119,7 @@ impl Query {
     )]
     pub fn sort(&self, expr: SortArg, asc: Option<bool>) -> Result<Query> {
         let exprs = match expr {
-            SortArg::Single(expr) => vec![SortExpression {
+            SortArg::Single(expr) => vec![SortExpr {
                 expr,
                 order: SortOrder::from(asc.unwrap_or(true)),
             }],
@@ -129,7 +129,7 @@ impl Query {
                         "cannot use `asc` when sorting by an array of sort expressions",
                     ));
                 }
-                sort_exprs.into_iter().map(|se| se.into()).collect()
+                sort_exprs
             }
         };
 

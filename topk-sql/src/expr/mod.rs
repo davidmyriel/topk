@@ -1,4 +1,4 @@
-use topk_rs::proto::v1::data::{LogicalExpr, TextExpr, Value};
+use topk_rs::proto::v1::data::{FunctionExpr, LogicalExpr, TextExpr, Value};
 
 mod aggregate;
 mod filter;
@@ -14,4 +14,12 @@ pub enum Expr {
     Literal(Value),
     Logical(LogicalExpr),
     Text(TextExpr),
+}
+
+impl Expr {
+    // Score functions are logical expressions, so every clause converts them
+    // through the same path.
+    pub fn function(func: FunctionExpr) -> Self {
+        Self::Logical(LogicalExpr::function(func))
+    }
 }

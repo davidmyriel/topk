@@ -94,34 +94,40 @@ impl FunctionExpr {
 // Lift into `LogicalExpr` so score functions compose directly with
 // comparisons and arithmetic, e.g. `fns::vector_distance(..).gt(0.5)`.
 macro_rules! lift {
-    ($($fn:ident),*) => {
+    ($($fn:ident($($arg:ident: $ty:ty),*)),* $(,)?) => {
         impl FunctionExpr {
-            $(pub fn $fn(self, rhs: impl Into<LogicalExpr>) -> LogicalExpr {
-                LogicalExpr::function(self).$fn(rhs)
+            $(pub fn $fn(self, $($arg: $ty),*) -> LogicalExpr {
+                LogicalExpr::function(self).$fn($($arg),*)
             })*
         }
     };
 }
 
-macro_rules! lift_unary {
-    ($($fn:ident),*) => {
-        impl FunctionExpr {
-            $(pub fn $fn(self) -> LogicalExpr {
-                LogicalExpr::function(self).$fn()
-            })*
-        }
-    };
-}
-
-lift!(gt, gte, lt, lte, eq, neq, add, sub, mul, div, min, max, coalesce);
-lift_unary!(is_null, is_not_null, abs, ln, exp, sqrt, square);
-
-impl FunctionExpr {
-    pub fn choose(self, x: impl Into<LogicalExpr>, y: impl Into<LogicalExpr>) -> LogicalExpr {
-        LogicalExpr::function(self).choose(x, y)
-    }
-
-    pub fn boost(self, condition: impl Into<LogicalExpr>, boost: impl Into<Value>) -> LogicalExpr {
-        LogicalExpr::function(self).boost(condition, boost)
-    }
-}
+lift!(
+    // Comparison operators
+    eq(rhs: impl Into<LogicalExpr>),
+    neq(rhs: impl Into<LogicalExpr>),
+    lt(rhs: impl Into<LogicalExpr>),
+    lte(rhs: impl Into<LogicalExpr>),
+    gt(rhs: impl Into<LogicalExpr>),
+    gte(rhs: impl Into<LogicalExpr>),
+    // Arithmetic operators
+    add(rhs: impl Into<LogicalExpr>),
+    sub(rhs: impl Into<LogicalExpr>),
+    mul(rhs: impl Into<LogicalExpr>),
+    div(rhs: impl Into<LogicalExpr>),
+    min(rhs: impl Into<LogicalExpr>),
+    max(rhs: impl Into<LogicalExpr>),
+    coalesce(rhs: impl Into<LogicalExpr>),
+    // Unary operators
+    is_null(),
+    is_not_null(),
+    abs(),
+    ln(),
+    exp(),
+    sqrt(),
+    square(),
+    // Ternary operators
+    choose(x: impl Into<LogicalExpr>, y: impl Into<LogicalExpr>),
+    boost(condition: impl Into<LogicalExpr>, boost: impl Into<Value>),
+);
