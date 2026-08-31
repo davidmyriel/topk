@@ -5,7 +5,6 @@ use crate::expr::{
     aggregate::AggregateExpression,
     filter::FilterExpression,
     logical::LogicalExpression,
-    select::SelectExpression,
     sort::{SortArg, SortExpr, SortOrder},
     text::{Term, TextExpression},
 };
@@ -47,15 +46,13 @@ impl Query {
     pub fn select(
         &self,
         #[napi(ts_arg_type = "Record<string, LogicalExpression | FunctionExpression>")]
-        exprs: HashMap<String, SelectExpression>,
+        exprs: HashMap<String, LogicalExpression>,
     ) -> Query {
         let mut new_query = Query {
             stages: self.stages.clone(),
         };
 
-        new_query.stages.push(Stage::Select {
-            exprs: exprs.into_iter().map(|(k, v)| (k, v.into())).collect(),
-        });
+        new_query.stages.push(Stage::Select { exprs });
 
         new_query
     }

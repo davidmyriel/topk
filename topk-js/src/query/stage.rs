@@ -1,13 +1,13 @@
 use crate::expr::{
     aggregate::AggregateExpression, filter::FilterExpression, logical::LogicalExpression,
-    select::SelectExpression, sort::SortExpr,
+    sort::SortExpr,
 };
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum Stage {
     Select {
-        exprs: HashMap<String, SelectExpression>,
+        exprs: HashMap<String, LogicalExpression>,
     },
     Filter {
         expr: FilterExpression,
@@ -31,7 +31,12 @@ pub enum Stage {
 impl From<Stage> for topk_rs::proto::v1::data::Stage {
     fn from(stage: Stage) -> Self {
         match stage {
-            Stage::Select { exprs } => topk_rs::proto::v1::data::Stage::select(exprs),
+            Stage::Select { exprs } => topk_rs::proto::v1::data::Stage::select(
+                exprs
+                    .into_iter()
+                    .map(|(k, e)| (k, Into::<topk_rs::proto::v1::data::LogicalExpr>::into(e)))
+                    .collect::<Vec<_>>(),
+            ),
             Stage::Filter { expr } => topk_rs::proto::v1::data::Stage::filter(expr),
             Stage::Limit { k } => topk_rs::proto::v1::data::Stage::limit(k.try_into().unwrap()),
             Stage::Sort { exprs } => topk_rs::proto::v1::data::Stage::sort(
