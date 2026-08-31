@@ -752,6 +752,12 @@ impl LogicalExpr {
     }
 }
 
+impl From<LogicalExpr> for topk_rs::proto::v1::data::stage::select_stage::SelectExpr {
+    fn from(expr: LogicalExpr) -> Self {
+        Self::logical(expr)
+    }
+}
+
 impl From<LogicalExpr> for topk_rs::proto::v1::data::LogicalExpr {
     fn from(expr: LogicalExpr) -> Self {
         match expr {

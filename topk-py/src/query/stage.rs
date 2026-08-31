@@ -33,12 +33,7 @@ pub enum Stage {
 impl From<Stage> for topk_rs::proto::v1::data::Stage {
     fn from(stage: Stage) -> Self {
         match stage {
-            Stage::Select { exprs } => topk_rs::proto::v1::data::Stage::select(
-                exprs
-                    .into_iter()
-                    .map(|(k, e)| (k, topk_rs::proto::v1::data::LogicalExpr::from(e)))
-                    .collect::<Vec<_>>(),
-            ),
+            Stage::Select { exprs } => topk_rs::proto::v1::data::Stage::select(exprs),
             Stage::Filter { expr } => topk_rs::proto::v1::data::Stage::filter(expr),
             Stage::Limit { k } => topk_rs::proto::v1::data::Stage::limit(k),
             Stage::Sort { exprs } => topk_rs::proto::v1::data::Stage::sort(
