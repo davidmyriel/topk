@@ -1,4 +1,4 @@
-use super::{logical::LogicalExpression, text::TextExpression};
+use super::{function::FunctionExpression, logical::LogicalExpression, text::TextExpression};
 use napi::bindgen_prelude::*;
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,14 @@ impl FromNapiValue for FilterExpression {
         if let Ok(expr) = crate::try_cast_ref!(env, value, TextExpression) {
             return Ok(FilterExpression {
                 expr: FilterExpressionUnion::Text { expr: expr.clone() },
+            });
+        }
+
+        if let Ok(expr) = crate::try_cast_ref!(env, value, FunctionExpression) {
+            return Ok(FilterExpression {
+                expr: FilterExpressionUnion::Logical {
+                    expr: expr.lifted(),
+                },
             });
         }
 

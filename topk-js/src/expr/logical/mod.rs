@@ -44,8 +44,14 @@ impl FromNapiValue for LogicalExpression {
         env: napi::sys::napi_env,
         value: napi::sys::napi_value,
     ) -> napi::Result<Self> {
-        let expr = crate::try_cast_ref!(env, value, LogicalExpression)?;
-        Ok(expr.clone())
+        if let Ok(expr) = crate::try_cast_ref!(env, value, LogicalExpression) {
+            return Ok(expr.clone());
+        }
+
+        // Accept a score function wherever a logical expression is expected,
+        // e.g. `.topk(fn.bm25Score(), 10)`.
+        let expr = crate::try_cast_ref!(env, value, FunctionExpression)?;
+        Ok(expr.lifted())
     }
 }
 

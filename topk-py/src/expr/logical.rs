@@ -178,6 +178,26 @@ pub enum LogicalExpr {
     },
 }
 
+// Accepts a score function wherever a logical expression is expected, e.g.
+// `.topk(fn.bm25_score(), 10)`.
+#[derive(Debug, Clone, FromPyObject)]
+pub enum LogicalExprUnion {
+    #[pyo3(transparent)]
+    Logical(LogicalExpr),
+
+    #[pyo3(transparent)]
+    Function(FunctionExpr),
+}
+
+impl From<LogicalExprUnion> for LogicalExpr {
+    fn from(expr: LogicalExprUnion) -> Self {
+        match expr {
+            LogicalExprUnion::Logical(expr) => expr,
+            LogicalExprUnion::Function(expr) => LogicalExpr::Function { expr },
+        }
+    }
+}
+
 impl std::fmt::Debug for LogicalExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

@@ -641,7 +641,7 @@ export declare namespace query {
    */
   export class Query {
     /** Adds a filter stage to the query. */
-    filter(expr: LogicalExpression | TextExpression): query.Query
+    filter(expr: LogicalExpression | FunctionExpression | TextExpression): query.Query
     /** Adds a select stage to the query. */
     select(exprs: Record<string, LogicalExpression | FunctionExpression>): query.Query
     /**
@@ -649,13 +649,13 @@ export declare namespace query {
      *
      * @deprecated Use `.sort(expr, false).limit(k)` instead.
      */
-    topk(expr: query.LogicalExpression, k: number, asc?: boolean | undefined | null): query.Query
+    topk(expr: LogicalExpression | FunctionExpression, k: number, asc?: boolean | undefined | null): query.Query
     /** Adds a limit stage to the query. */
     limit(k: number): query.Query
     /** Adds an offset stage to the query. */
     offset(offset: number): query.Query
     /** Adds a sort stage to the query. */
-    sort(expr: LogicalExpression, asc?: boolean | undefined | null): Query
+    sort(expr: LogicalExpression | FunctionExpression, asc?: boolean | undefined | null): Query
     sort(expr: Array<SortExpr>): Query
     /** Adds a count stage to the query. */
     count(): query.Query
@@ -664,7 +664,7 @@ export declare namespace query {
      *
      * Groups documents by one or more key expressions and computes aggregations for each group.
      */
-    groupBy(keys: Record<string, LogicalExpression>, aggs: Record<string, AggregateExpression>): query.Query
+    groupBy(keys: Record<string, LogicalExpression | FunctionExpression>, aggs: Record<string, AggregateExpression>): query.Query
   }
   export class TextExpression {
     /** Computes the logical AND of the expression and another text expression. */
@@ -713,7 +713,7 @@ export declare namespace query {
   /** Creates a field reference expression. */
   export function field(name: string): query.LogicalExpression
   /** Creates a new query with a filter stage. */
-  export function filter(expr: LogicalExpression | TextExpression): query.Query
+  export function filter(expr: LogicalExpression | FunctionExpression | TextExpression): query.Query
   /**
    * Creates a new query with a group-by stage.
    *
@@ -812,7 +812,7 @@ export declare namespace query {
   /** An expression to sort by with its sort order. */
   export interface SortExpr {
     /** The expression to sort by. */
-    expr: query.LogicalExpression
+    expr: LogicalExpression | FunctionExpression
     /** Sort order. */
     order: query.SortOrder
   }

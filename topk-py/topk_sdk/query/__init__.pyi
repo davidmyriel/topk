@@ -450,13 +450,15 @@ class Query:
         Adds a select stage to the query.
         """
         ...
-    def filter(self, expr: LogicalExpr | TextExpr) -> Query:
+    def filter(self, expr: LogicalExpr | FunctionExpr | TextExpr) -> Query:
         """
         Adds a filter stage to the query.
         """
         ...
     @typing.overload
-    def sort(self, expr: LogicalExpr, asc: builtins.bool = True) -> Query:
+    def sort(
+        self, expr: LogicalExpr | FunctionExpr, asc: builtins.bool = True
+    ) -> Query:
         """
         Adds a sort stage to the query.
         """
@@ -464,7 +466,9 @@ class Query:
     @typing.overload
     def sort(
         self,
-        expr: typing.Sequence[tuple[LogicalExpr, typing.Literal["asc", "desc"]]],
+        expr: typing.Sequence[
+            tuple[LogicalExpr | FunctionExpr, typing.Literal["asc", "desc"]]
+        ],
     ) -> Query:
         """
         Adds a sort stage to the query.
@@ -489,7 +493,7 @@ class Query:
         ...
     def group_by(
         self,
-        keys: dict[builtins.str, LogicalExpr],
+        keys: dict[builtins.str, LogicalExpr | FunctionExpr],
         aggs: dict[builtins.str, AggregateExpr],
     ) -> Query:
         """
@@ -499,7 +503,10 @@ class Query:
         """
         ...
     def topk(
-        self, expr: LogicalExpr, k: builtins.int, asc: builtins.bool = False
+        self,
+        expr: LogicalExpr | FunctionExpr,
+        k: builtins.int,
+        asc: builtins.bool = False,
     ) -> Query:
         """
         .. deprecated::
@@ -534,7 +541,7 @@ def select(
 
 ...
 
-def filter(expr: LogicalExpr | TextExpr) -> Query:
+def filter(expr: LogicalExpr | FunctionExpr | TextExpr) -> Query:
     """
     Creates a new query with a filter stage.
 
@@ -551,7 +558,7 @@ def filter(expr: LogicalExpr | TextExpr) -> Query:
     ...
 
 def group_by(
-    keys: dict[builtins.str, LogicalExpr],
+    keys: dict[builtins.str, LogicalExpr | FunctionExpr],
     aggs: dict[builtins.str, AggregateExpr],
 ) -> Query:
     """

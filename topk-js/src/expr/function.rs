@@ -76,7 +76,7 @@ macro_rules! lift {
 }
 
 impl FunctionExpression {
-    fn lifted(&self) -> LogicalExpression {
+    pub(crate) fn lifted(&self) -> LogicalExpression {
         LogicalExpression {
             expr: LogicalExpressionUnion::Function { expr: self.clone() },
         }
