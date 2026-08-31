@@ -93,6 +93,10 @@ pub enum FieldMapping {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[allow(dead_code)]
         fields: Option<MappingProperties>,
+
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[allow(dead_code)]
+        ignore_above: Option<u32>,
     },
 
     #[serde(rename = "integer", alias = "long", alias = "short", alias = "byte")]
@@ -100,6 +104,15 @@ pub enum FieldMapping {
         #[serde(default)]
         #[allow(dead_code)]
         index: Option<bool>,
+    },
+
+    #[serde(rename = "date", alias = "date_nanos")]
+    Date {
+        #[serde(default)]
+        index: Option<bool>,
+
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<String>,
     },
 
     #[serde(rename = "float", alias = "double", alias = "half_float")]
@@ -134,6 +147,10 @@ pub enum FieldMapping {
 
         #[serde(default)]
         element_type: ElementType,
+
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[allow(dead_code)]
+        index_options: Option<serde_json::Map<String, serde_json::Value>>,
     },
 
     #[serde(rename = "rank_vectors", alias = "matrix")]
@@ -298,7 +315,7 @@ impl TryFrom<FieldMapping> for FieldSpec {
                 }
                 Ok(field)
             }
-            FieldMapping::Keyword { index, fields: _ } => {
+            FieldMapping::Keyword { index, .. } => {
                 let mut field = FieldSpec::text(false);
                 if index.unwrap_or(true) {
                     field = field.with_index(FieldIndex::keyword(KeywordIndexType::Exact));
@@ -306,6 +323,7 @@ impl TryFrom<FieldMapping> for FieldSpec {
                 Ok(field)
             }
             FieldMapping::Integer { index: _ } => Ok(FieldSpec::integer(false)),
+            FieldMapping::Date { .. } => Ok(FieldSpec::timestamp(false)),
             FieldMapping::Float { index: _ } => Ok(FieldSpec::float(false)),
             FieldMapping::Boolean { index: _ } => Ok(FieldSpec::boolean(false)),
             FieldMapping::Object { properties } => Ok(FieldSpec::r#struct(
@@ -321,6 +339,7 @@ impl TryFrom<FieldMapping> for FieldSpec {
                 similarity,
                 index,
                 element_type,
+                index_options: _,
             } => {
                 let metric = similarity
                     .map(VectorDistanceMetric::from)
@@ -402,6 +421,7 @@ impl TryFrom<&FieldSpec> for FieldMapping {
                     KeywordIndexType::Exact => FieldMapping::Keyword {
                         index: Some(true),
                         fields: None,
+                        ignore_above: None,
                     },
                     _ => FieldMapping::Text {
                         index: Some(true),
@@ -415,6 +435,10 @@ impl TryFrom<&FieldSpec> for FieldMapping {
                 _ => return Err(Error::Unsupported("Invalid text index".into())),
             },
             Some(field_type::DataType::Integer(_)) => FieldMapping::Integer { index: Some(false) },
+            Some(field_type::DataType::Timestamp(_)) => FieldMapping::Date {
+                index: Some(false),
+                format: None,
+            },
             Some(field_type::DataType::Float(_)) => FieldMapping::Float { index: Some(false) },
             Some(field_type::DataType::Boolean(_)) => FieldMapping::Boolean { index: Some(false) },
             Some(field_type::DataType::Struct(s)) => FieldMapping::Object {
@@ -442,12 +466,14 @@ impl TryFrom<&FieldSpec> for FieldMapping {
                         similarity: Some(vector.metric().into()),
                         index: Some(true),
                         element_type,
+                        index_options: None,
                     },
                     None => FieldMapping::DenseVector {
                         dims,
                         similarity: None,
                         index: Some(false),
                         element_type,
+                        index_options: None,
                     },
                     _ => FieldMapping::Object {
                         properties: MappingProperties::default(),
