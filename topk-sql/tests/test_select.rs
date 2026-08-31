@@ -944,11 +944,6 @@ async fn cast_without_alias() {
      ORDER BY score DESC LIMIT 10",
     ids!["hobbit", "lotr", "harry"],
 )]
-#[case::order_by_inline(
-    "SELECT _id FROM {{table}} \
-     ORDER BY vector_distance(embedding, f32_vector(ARRAY[1, 0, 0, 0])) DESC LIMIT 3",
-    ids!["hobbit", "lotr", "harry"],
-)]
 #[tokio::test]
 async fn vector_distance_search(#[case] query: &str, #[case] expected: HashSet<&str>) {
     let rows = BooksContext::with_scope(async |ctx| ctx.sql(query).await)
@@ -963,6 +958,21 @@ async fn vector_distance_search(#[case] query: &str, #[case] expected: HashSet<&
         .get("score")
         .and_then(Value::as_f32)
         .expect("score should be present");
+}
+
+#[tokio::test]
+async fn vector_distance_order_by_inline() {
+    let rows = BooksContext::with_scope(async |ctx| {
+        ctx.sql(
+            "SELECT _id FROM {{table}} \
+             ORDER BY vector_distance(embedding, f32_vector(ARRAY[1, 0, 0, 0])) DESC LIMIT 3",
+        )
+        .await
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(ids(&rows), ids!["hobbit", "lotr", "harry"]);
 }
 
 #[tokio::test]
