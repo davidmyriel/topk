@@ -13,11 +13,6 @@ mod value;
 pub enum Expr {
     Literal(Value),
     Logical(LogicalExpr),
+    Function(FunctionExpr),
     Text(TextExpr),
-}
-
-impl Expr {
-    pub fn function(func: FunctionExpr) -> Self {
-        Self::Logical(LogicalExpr::function(func))
-    }
 }

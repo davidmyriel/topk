@@ -178,7 +178,7 @@ impl TryFrom<SqlFunction> for Expr {
                 let field = field.as_ident().ok_or_else(|| {
                     Error::Invalid(format!("{name}: field must be an identifier"))
                 })?;
-                Self::function(FunctionExpr::vector_distance(
+                Self::Function(FunctionExpr::vector_distance(
                     field,
                     Value::from_sql(query)?,
                     skip_refine,
@@ -205,17 +205,17 @@ impl TryFrom<SqlFunction> for Expr {
                 let field = field.as_ident().ok_or_else(|| {
                     Error::Invalid(format!("{name}: field must be an identifier"))
                 })?;
-                Self::function(FunctionExpr::multi_vector_distance(
+                Self::Function(FunctionExpr::multi_vector_distance(
                     field,
                     Value::from_sql(query)?,
                     candidates,
                 ))
             }
             "bm25_score" => match args.len() {
-                0 => Self::function(FunctionExpr::bm25_score(None, None)),
+                0 => Self::Function(FunctionExpr::bm25_score(None, None)),
                 2 => {
                     let [b, k1]: [SqlExpr; 2] = exact(args, &name)?;
-                    Self::function(FunctionExpr::bm25_score(
+                    Self::Function(FunctionExpr::bm25_score(
                         Some(f32_literal(b)?),
                         Some(f32_literal(k1)?),
                     ))
@@ -230,7 +230,7 @@ impl TryFrom<SqlFunction> for Expr {
                 let field = field.as_ident().ok_or_else(|| {
                     Error::Invalid(format!("{name}: field must be an identifier"))
                 })?;
-                Self::function(FunctionExpr::semantic_similarity(field, query))
+                Self::Function(FunctionExpr::semantic_similarity(field, query))
             }
             _ => return Err(Error::UnknownFunction(name)),
         })
@@ -403,7 +403,7 @@ impl FromSql<SqlFunction> for Value {
         let name = func.name();
         match Expr::try_from(func)? {
             Expr::Literal(v) => Ok(v),
-            Expr::Logical(_) | Expr::Text(_) => {
+            Expr::Logical(_) | Expr::Function(_) | Expr::Text(_) => {
                 sql_unsupported!("`{name}` does not produce a Value")
             }
         }
@@ -415,6 +415,7 @@ impl FromSql<SqlFunction> for LogicalExpr {
         let name = func.name();
         match Expr::try_from(func)? {
             Expr::Logical(expr) => Ok(expr),
+            Expr::Function(func) => Ok(LogicalExpr::function(func)),
             Expr::Literal(value) => Ok(LogicalExpr::literal(value)),
             Expr::Text(_) => sql_unsupported!(
                 "`{name}` is a text filter function — only valid in WHERE (e.g. \
