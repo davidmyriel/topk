@@ -1,0 +1,80 @@
+---
+title: "Why does my vector database need so much RAM, and how do I stop paying for it?"
+description: "HNSW indexes must live in memory, so your bill scales with data you rarely query. TopK keeps everything on object storage and caches only what is hot."
+---
+
+## Short answer
+
+Most vector engines keep the whole index in RAM because HNSW graph traversal does random reads. TopK stores all data on object storage and uses NVMe and RAM as a cache. Idle data costs storage only.
+
+Nothing changes in your code. It is the same collection, same query API.
+
+## The problem
+
+- Milvus has over 130 issues with "OOM" in the title. One user saw memory reach 329 GB for 200 million vectors ([#40270](https://github.com/milvus-io/milvus/issues/40270)).
+- Chroma: "Size of database cannot grow larger than available RAM?" has been open since 2023 ([#1323](https://github.com/chroma-core/chroma/issues/1323)).
+- LanceDB ran out of memory creating an index ([#767](https://github.com/lancedb/lancedb/issues/767), 25 comments). Another user hit OOM on 180 million rows with 128 GB RAM.
+- Qdrant reports high RAM even with `on_disk: true` ([#6077](https://github.com/qdrant/qdrant/issues/6077)).
+- Elasticsearch's own sizing rule is `num_vectors * 4 * (dims + 32)` bytes of page cache ([#93670](https://github.com/elastic/elasticsearch/issues/93670)). Elastic shipped DiskBBQ in 2025 because HNSW "requires all vectors to reside in memory".
+
+A billion 1536-dimension float vectors is roughly 6 TB. Nobody wants to rent that much RAM for data that is mostly cold.
+
+## How TopK handles it
+
+From the [architecture](/architecture) page:
+
+- Object storage is the only durable store. A write-ahead log and LSM-style compaction keep it queryable.
+- Executor nodes cache hot data in memory and on local NVMe. They are stateless and can be replaced.
+- Read and write node pools are separate, so ingestion never competes with queries for memory.
+- The `.bob` columnar format supports zero-copy reads of compressed vectors straight from storage.
+
+What this means for you:
+
+- Store a billion documents in one partition ([limits](/limits)).
+- Quantize to f16, f8, u8, or binary to shrink further, with hamming distance for binary.
+- Pay object-storage rates for data nobody is searching.
+
+```python
+from topk_sdk.schema import text, f16_vector, vector_index
+
+client.collections().create("archive", schema={
+    "title": text().required(),
+    "embedding": f16_vector(dimension=1536).required().index(vector_index(metric="cosine")),
+})
+```
+
+## Trade-off
+
+The first query against cold data pays an object-storage read. After that it is cached. Latency targets in the [vector search guide](/guides/vector-search) are for warm data. Benchmark your own cold-start pattern before committing to a latency SLA.
+
+## Related
+
+- [Architecture](/architecture)
+- [Limits](/limits)
+- [Vector search guide](/guides/vector-search)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Tier 2. Rank #3 by raw issue volume** (highest of all themes).
+- **Evidence**: Milvus 135 issues with "OOM" in title (#31705 29 comments, #37665, #34273, #40270 329 GB for 200M vectors). Chroma #1323 open since 2023-11; ~21 memory issues (#1908, #4024, #2673, #1411 after 1000 collections). Qdrant ~101 memory issues (#5836, #6077, #4378 open, #5250 leak open 14 comments); incident #9986 heap migration starved page cache. LanceDB #767 (open, 25 comments), #2894 >250 GB on 60M rows, #2325 OOM 180M rows/128 GB. Weaviate #5071, #10322. FAISS #2662. OpenSearch k-NN #1301, #2401 (33 comments), #1134. Elasticsearch #93670 sizing formula; DiskBBQ launch Oct 2025 quote "HNSW simply falls apart once memory gets very restricted" (elastic.co blog, unverified). Vespa sizing doc: memory "increases almost linearly with number of documents". Turbopuffer origin story ($5k vs $20k/month, unverified, site blocked).
+- **TopK sources**: `docs/architecture.mdx` (object storage only durable store, RAM+NVMe cache, separate read/write pools, `.bob` zero-copy format, executor nodes semi-ephemeral). `docs/limits.mdx` 1B+ docs per partition. Quantized vector types in `topk-py/topk_sdk/schema/__init__.pyi` lines 109-189 (f8, f16, f32, u8, i8, binary). "10x lower cost" is the README claim; no public pricing math in repo.
+- **"6 TB for a billion 1536-dim floats"**: arithmetic (1e9 * 1536 * 4 bytes ≈ 6.1 TB), not sourced.
+- **Cold-start caveat**: the agents flagged that TopK on object storage shares the cold-cache risk Neon documents for its own object-storage search. No cold-start latency number exists in the repo. Do not claim one. The `topk-io/bench` tool may have data.
+- **Code**: `f16_vector` + `vector_index(metric="cosine")` per schema stubs and `docs/guides/vector-search.mdx` line 32.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing all twelve. This is one of twelve. See `00-research-report.md` for the ranked list and full evidence.
+- **Readiness tiers**: Tier 1 (feature shipped and documented): filtered search, hybrid, multi-tenancy, read-your-writes, ColPali. Tier 2 (shipped, docs thin, or minor SDK gaps): RAM/cost, index build, Postgres SQL, agent memory, facets. Tier 3 (needs engineering or publishing before marketing): Elasticsearch compatibility, coding-assistant memory. This page's tier is stated in the page-specific notes.
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. Drafts are Python-only (plus SQL where relevant); add JS tabs from `docs/sdk/topk-js/` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and existing guides. Schema functions are `text()`, `int()`, `float()`, `bool()`, `timestamp()`, not `integer()`. `FieldSpec` holds exactly one index (`protos/topk/control/v1/schema.proto` line 7). Text predicates and logical filters go in separate `.filter()` calls, following the hybrid guide. Internal `/answers/...` links assume a route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}

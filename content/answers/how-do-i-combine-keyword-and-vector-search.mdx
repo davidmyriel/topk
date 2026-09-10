@@ -1,0 +1,107 @@
+---
+title: "How do I combine keyword search and vector search in one query?"
+description: "Hybrid search without running two queries and merging them in your app. One index, one scoring expression, one result list."
+---
+
+## Short answer
+
+Put a BM25 score and a semantic score in the same `select`, then sort by any formula of the two.
+
+```python
+from topk_sdk.query import select, field, fn, match
+
+docs = client.collection("products").query(
+    select(
+        "name",
+        keyword=fn.bm25_score(),
+        semantic=fn.semantic_similarity("description", "blue phone protector"),
+    )
+    .filter(match("iphone 15"))
+    .sort(field("semantic") * 0.6 + field("keyword") * 0.4, asc=False)
+    .limit(10)
+)
+```
+
+No second query. No merge step. No embedding call in your code, `semantic_similarity` embeds the query text server-side.
+
+## The problem
+
+Users type "iPhone 15 case blue". Keyword search nails the model number. Semantic search understands "blue protector". You need both.
+
+Most stores make this hard:
+
+- Chroma has no keyword search. The request ([#1330](https://github.com/chroma-core/chroma/issues/1330)) is its most-upvoted open issue, open since 2023.
+- Elasticsearch fuses results with RRF, but RRF is a paid-tier feature. Free users get a license error.
+- pgvector's README tells you to hand-roll `tsvector` plus RRF in SQL.
+- Open WebUI rebuilt a BM25 index in Python on every query. A 10k-document collection took 30 to 60 seconds ([discussion #20737](https://github.com/open-webui/open-webui/discussions/20737)).
+
+Even when hybrid works, two-index fusion is probabilistic. Each index returns its top 100, the app merges 200 candidates. A document ranked 101st in both lists never appears, even if it is the best overall.
+
+## How TopK handles it
+
+One index holds keywords and vectors. One scan produces the true top-k for your combined formula. Details in the [true hybrid search guide](/guides/true-hybrid-search).
+
+Schema:
+
+```python
+from topk_sdk.schema import text, keyword_index, semantic_index
+
+client.collections().create("products", schema={
+    "name": text().required().index(keyword_index()),
+    "description": text().index(semantic_index()),
+})
+```
+
+Scoring is an expression, so you can add business signals:
+
+```python
+.sort(
+    field("semantic") * 0.6
+    + field("keyword") * 0.3
+    + field("in_stock") * 0.1,
+    asc=False,
+)
+```
+
+Or require a keyword and rank by meaning:
+
+```python
+.filter(match("carbon") | match("renewable energy"))
+.sort(field("semantic"), asc=False)
+```
+
+## Bring your own vectors
+
+If you already have embeddings, swap `semantic_similarity` for `vector_distance` on an `f32_vector` field. Sparse vectors (SPLADE) work the same way with `f32_sparse_vector`.
+
+## Related
+
+- [True hybrid search guide](/guides/true-hybrid-search)
+- [Keyword search guide](/guides/keyword-search)
+- [Semantic search guide](/guides/semantic-search)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Rank**: #2 by popularity.
+- **Primary evidence**: Chroma #1330 "Hybrid Search with BM25" (open since 2023-11-03, 36 comments, 78 reactions, most-reacted issue in Chroma), Chroma #1686 (39 reactions), #2633, #6185. Weaviate #1798, #4019 sparse vectors (23 reactions, open), #10350, #5447. pgvector #81 sparse vectors, #941, #892 "Missing bm25", #883 hybrid pagination; pgvector README tells users to hand-roll tsvector + RRF. Milvus ~770 hits for bm25/hybrid/full-text; bugs #36835, #38528, #36986, #40064 (25 comments). Qdrant #4999, #7164. LanceDB #1930. Open WebUI discussion #20737 (Jan 2026, BM25 rebuilt in Python per query, 30-60s for 10k docs; maintainer said dev branch addresses it June 2026), #20469, #8582. LangChain #37215 closed not planned. Elasticsearch RRF license gating: discuss.elastic.co thread 342354 (unverified), langchain-elastic #38.
+- **TopK claim source**: `docs/guides/true-hybrid-search.mdx` "How TopK differs" section (single index vs two-index RRF fusion being probabilistic). The mermaid diagrams there could be reused.
+- **Code**: schema and query patterns lifted from `docs/guides/true-hybrid-search.mdx` lines 78-125 and 176-192, and `docs/guides/semantic-search.mdx` lines 252-265. `match()` is imported from `topk_sdk.query`. `match("a") | match("b")` is OR per the hybrid guide. The `field("in_stock") * 0.1` example assumes a boolean or numeric field; verify boolean arithmetic is allowed or change to an integer field.
+- **Managed inference**: `semantic_index()` model is TopK's Iso-ModernColBERT (huggingface.co/topk-io/Iso-ModernColBERT). The `model` parameter on `semantic_index` is deprecated in `protos/topk/control/v1/schema.proto`, so do not document model selection.
+- **Open WebUI angle**: could be a separate integration post. No TopK provider exists for Open WebUI, AnythingLLM, LangChain, or LlamaIndex. Only Haystack (`topk-io/topk-haystack`) ships.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing them. This is one of five.
+- **Why this batch**: these five problems were ranked highest on (a) cross-repo popularity, (b) the TopK feature being shipped AND documented today, (c) low risk of overpromising. Deferred topics (need engineering first): pgvector migration guide, aggregations/facets (quantile and count_distinct are Rust-only), recency ranking (`decay`/`saturate` Rust-only), Elasticsearch replacement (`topk-es` crate is `publish = false`, no README, no Kibana/ILM/date_histogram/search_after), coding-agent memory (MCP server removed in PR #574 on 2026-08-27).
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. This draft is Python-only; add JS tabs from `docs/sdk/topk-js/` and SQL tabs from `docs/sdk/topk-sql/overview.mdx` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call in the draft was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and the existing guides. Internal links assume a `/answers/` route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}

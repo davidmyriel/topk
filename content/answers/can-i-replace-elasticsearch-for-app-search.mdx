@@ -1,0 +1,92 @@
+---
+title: "Can I point my Elasticsearch client at TopK?"
+description: "For product and document search, yes: mappings, _bulk, _search with query DSL, kNN, and RRF. For logs and Kibana, no."
+---
+
+## Short answer
+
+TopK exposes an Elasticsearch-compatible API. Official `elasticsearch-py`, `-js`, `-rs`, and `-java` clients connect. Supported:
+
+- `PUT /{index}` with `mappings.properties` for `text`, `keyword`, `integer`, `float`, `boolean`, `object`, `dense_vector` (float, byte, bit), `rank_vectors` for multi-vector, `semantic_text`
+- `_bulk`, `_doc`, `_mget`, `_msearch`, `_count`, `_mapping`, `_field_caps`, `_refresh`
+- Query DSL: `match`, `multi_match`, `term`, `terms`, `ids`, `prefix`, `regexp`, `range`, `exists`, `bool`, plus a `semantic` clause
+- `knn` with one or more clauses, filters, and matrix query vectors for ColBERT-style search
+- `rank.rrf` hybrid fusion, free
+- `terms` aggregation with `sum`, `avg`, `min`, `max`, `value_count` sub-aggregations
+
+## The problem
+
+- RRF hybrid search in Elasticsearch requires a Platinum or Enterprise license. Free users get `license is non-compliant` ([langchain-elastic #38](https://github.com/langchain-ai/langchain-elastic/issues/38)).
+- Semantic search needs dedicated ML nodes, 4 GB minimum, and ELSER is a paid feature.
+- Vector fields must fit in page cache ([#93670](https://github.com/elastic/elasticsearch/issues/93670)). OpenSearch's native memory circuit breaker OOM-kills nodes ([k-NN #1301](https://github.com/opensearch-project/k-NN/issues/1301)).
+- One index per tenant hits the 1,000 shards-per-node limit ([#20705](https://github.com/elastic/elasticsearch/issues/20705)).
+- Substring and leading-wildcard queries are slow enough that Elastic added a whole `wildcard` field type ([#48852](https://github.com/elastic/elasticsearch/issues/48852)).
+
+## Example
+
+```python
+from elasticsearch import Elasticsearch
+
+es = Elasticsearch("https://<region>.es.topk.io", api_key="<api-key>")
+
+es.indices.create(index="products", mappings={"properties": {
+    "name": {"type": "text"},
+    "brand": {"type": "keyword"},
+    "description": {"type": "semantic_text"},
+    "image_vec": {"type": "dense_vector", "dims": 512, "similarity": "cosine"},
+}})
+
+es.search(index="products", body={
+    "query": {"bool": {
+        "must": [{"match": {"name": "headphones"}}],
+        "filter": [{"term": {"brand": "sony"}}],
+    }},
+    "knn": {"field": "image_vec", "query_vector": [...], "k": 20, "num_candidates": 100},
+    "rank": {"rrf": {"rank_constant": 60, "rank_window_size": 100}},
+    "aggs": {"brands": {"terms": {"field": "brand", "size": 10}}},
+    "size": 10,
+})
+```
+
+## What does not work
+
+- No Kibana or OpenSearch Dashboards. System indices with a leading dot are rejected.
+- No ILM, data streams, index templates, aliases, `_reindex`, `_update_by_query`, `_delete_by_query`.
+- No `date_histogram`, `cardinality`, `percentiles`, `composite`, or nested `terms` aggregations.
+- No `search_after`, `scroll`, or point-in-time. `from + size` is capped at 10,000.
+- No `wildcard`, `query_string`, `fuzzy`, `match_phrase`, `nested`, `function_score`, or `script_score`.
+- No auto-generated document IDs. Every bulk action needs `_id`. No `create` action.
+- No `date` field type. Store epoch milliseconds as `integer`.
+- Partitions are not reachable through this API.
+
+Use it for application search: catalogs, documents, help centers, semantic and hybrid retrieval. Do not use it for logs, metrics, or dashboards.
+
+## Related
+
+- [True hybrid search guide](/guides/true-hybrid-search)
+- [Multi-vector search guide](/guides/multi-vector-search)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Tier 3. HOLD until the crate ships.** `topk-es/Cargo.toml` has `publish = false`, `version = 0.1.0`, no README, not in `docs/docs.json`, not in root README. It is wired into CI (`Earthfile` lines 243-245) and has integration tests against `https://{region}.es.topk.io` (`topk-es/tests/common/mod.rs` lines 32-38), so a live endpoint exists. Confirm with the team whether it is customer-facing before publishing this page.
+- **Evidence**: RRF licensing discuss.elastic.co 342354 (unverified), langchain-elastic #38, ES #111623 weighted RRF still Enterprise-gated. ELSER needs ML nodes (elastic.co docs, unverified), ml-commons #2308, OpenSearch forum 15351. ES #93670 sizing, k-NN #1301, #2401, #1134. ES #20705 shards limit. ES #26759 substring impossible (2017), #48852 wildcard field. ES #72068 multi-vector (open since 2021, 50 reactions). OpenSearch #15350 hybrid pagination bug. Client lock-in: elasticsearch-py #1734, #1768 (X-Elastic-Product header). ES #86531 aggs memory. Deep pagination: elasticsearch-js #1323, discuss 140594, GitLab #8754.
+- **Supported surface source**: all from `topk-es/src/api/` types and tests. Query DSL `query.rs` lines 10-23; search body keys `search.rs` lines 29-58 (`deny_unknown_fields`, so anything else is a 400); knn lines 110-125; rrf 153-163; aggs `aggs.rs` lines 19-27; mappings `mapping.rs` lines 74-178; bulk rejects `create`, scripted update, `doc_as_upsert`, auto-ids (`bulk.rs` lines 63-98); index-name regex `path.rs` line 15 (no leading dot, no `$`, so no partitions); `from+size <= 10000` at `search.rs` line 95. `X-Elastic-Product` header and `GET /` version are returned (`tests/info.rs` lines 7-23), so official clients connect.
+- **Code**: hostname `https://<region>.es.topk.io` matches the test harness pattern. Auth: tests use `ES_TOKEN` or `TOPK_API_KEY` as bearer; `api_key=` in the Python client sends `Authorization: ApiKey`, which may or may not be accepted. Verify auth scheme. `semantic_text` mapping is accepted per `mapping.rs`; the `semantic` query clause is TopK-specific and only allowed in scoring positions.
+- **Not supported list** is from the same files. It is long on purpose. Quickwit is the direct competitor for the log-search angle and has Grafana integration; do not position against logs.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing all twelve. This is one of twelve. See `00-research-report.md` for the ranked list and full evidence.
+- **Readiness tiers**: Tier 1 (feature shipped and documented): filtered search, hybrid, multi-tenancy, read-your-writes, ColPali. Tier 2 (shipped, docs thin, or minor SDK gaps): RAM/cost, index build, Postgres SQL, agent memory, facets. Tier 3 (needs engineering or publishing before marketing): Elasticsearch compatibility, coding-assistant memory. This page's tier is stated in the page-specific notes.
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. Drafts are Python-only (plus SQL where relevant); add JS tabs from `docs/sdk/topk-js/` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and existing guides. Schema functions are `text()`, `int()`, `float()`, `bool()`, `timestamp()`, not `integer()`. `FieldSpec` holds exactly one index (`protos/topk/control/v1/schema.proto` line 7). Text predicates and logical filters go in separate `.filter()` calls, following the hybrid guide. Internal `/answers/...` links assume a route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}

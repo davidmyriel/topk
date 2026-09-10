@@ -1,0 +1,105 @@
+---
+title: "Why does my filtered vector search return fewer results than I asked for?"
+description: "You asked for 10 nearest neighbors with a WHERE clause and got 3. Here is why it happens in HNSW-based databases and how TopK guarantees the filter is honored."
+---
+
+## Short answer
+
+Most vector databases find the nearest neighbors first and apply your filter afterwards. If the filter removes most of them, you get fewer than you asked for, or nothing.
+
+TopK applies the filter first, then ranks. If 10 matching documents exist, you get 10.
+
+## The problem
+
+You run something like this:
+
+```sql
+SELECT id FROM docs
+WHERE tenant_id = 42
+ORDER BY embedding <=> $query
+LIMIT 10;
+```
+
+The index returns its 10 closest vectors across the whole table, then the database drops any that are not tenant 42. Three survive. You asked for 10.
+
+This is the most-discussed issue in pgvector ([#259](https://github.com/pgvector/pgvector/issues/259), 87 comments). The same failure shows up as "returns less than topk" in Milvus (~47 issues), and as filter-recall requests in Elasticsearch ([#106994](https://github.com/elastic/elasticsearch/issues/106994)) and Weaviate ([#2393](https://github.com/weaviate/weaviate/issues/2393)).
+
+Common workarounds all have costs:
+
+- Raise `ef_search` so the index over-fetches. Slower, still not guaranteed.
+- One partial index per tenant. Does not scale past a few hundred.
+- Iterative scans (pgvector 0.8). One reporter saw latency go from 229 ms to 3.2 s.
+
+## How TopK handles it
+
+Filters run before top-k. From the [concepts](/concepts#filtering) page:
+
+> Filters are always applied before sorting and aggregation (top-k) to guarantee that the final results contain every document matching the filter, even if there is just one. We also guarantee that recall stays the same (or improves) when using highly selective filters.
+
+The filter and the similarity score are part of one query plan, so there is no second pass to drop rows.
+
+```python
+from topk_sdk.query import select, field, fn
+
+docs = client.collection("docs").query(
+    select(
+        "title",
+        similarity=fn.vector_distance("embedding", query_vector),
+    )
+    .filter(field("tenant_id") == 42)
+    .filter(field("published_year") > 2020)
+    .sort(field("similarity"), asc=False)
+    .limit(10)
+)
+```
+
+Filters can be any expression: comparisons, `AND`/`OR`, `in`, regex, keyword match, or a computed score.
+
+For per-tenant data, use a [partition](/concepts#multi-tenancy) instead of a filter. The engine then scans only that tenant's data.
+
+```python
+client.collection("docs", "tenant-42").query(
+    select("title", similarity=fn.vector_distance("embedding", query_vector))
+    .sort(field("similarity"), asc=False)
+    .limit(10)
+)
+```
+
+## What to expect
+
+- Dense vector search is approximate with 95%+ recall. Sparse vector search is exact.
+- Highly selective filters do not lower recall.
+- No index tuning parameters to set.
+
+## Related
+
+- [Vector search guide](/guides/vector-search)
+- [Filtering reference](/collections/query#filtering)
+- [Multi-tenancy](/concepts#multi-tenancy)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Rank**: #1 problem by popularity across every vector DB repo surveyed.
+- **Primary evidence**: pgvector #259 "Understanding HNSW + filtering" (opened 2023-09-11, closed, 87 comments, 61 reactions, most-reacted issue in the repo). Related pgvector: #678 iterative index scans (44 comments), #719 (29), #721 index bypass, #671, #244, #785 (latency 229ms→3228ms with iterative scan), #980 segment-level indexes (2026-04). Milvus: ~47 issues titled "less than topk/limit" (#33933, #34468, #38682, #32618, #50435). Elasticsearch #81788 (16 reactions), #106994 (35 reactions). Weaviate #2393 (36 reactions), #7681. OpenSearch k-NN #1140. Chroma #4089, #1043.
+- **TopK claim source**: `docs/concepts.mdx` line 20, quoted verbatim in the page. This is a vendor claim. No public benchmark in the repo demonstrates it. `topk-io/bench` (github.com/topk-io/bench) measures filter selectivity but results live in a blog post that could not be fetched. No test in `topk-rs/tests` asserts recall under selective filters. Consider adding a benchmark chart or softening "guarantee" to match what marketing is comfortable with.
+- **Mechanism**: `docs/architecture.mdx` describes the `reactor` query engine with vectorized filtering. No algorithm detail is public. Do not invent one.
+- **Recall numbers**: dense ANN 95%+ from `docs/limits.mdx` and `docs/guides/vector-search.mdx`. Sparse is exact per `docs/guides/sparse-vector-search.mdx`.
+- **Code**: `fn.vector_distance`, `.filter()`, `.sort().limit()` per `docs/guides/vector-search.mdx` lines 78-92 and 171-182. Partition example per `docs/concepts.mdx` lines 45-91. `query_vector` is a placeholder; guides use `[0.1, 0.2, 0.3, ...]`.
+- **Cross-link**: the multi-tenancy answer page. Also consider linking pgvector migration once that guide exists.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing them. This is one of five.
+- **Why this batch**: these five problems were ranked highest on (a) cross-repo popularity, (b) the TopK feature being shipped AND documented today, (c) low risk of overpromising. Deferred topics (need engineering first): pgvector migration guide, aggregations/facets (quantile and count_distinct are Rust-only), recency ranking (`decay`/`saturate` Rust-only), Elasticsearch replacement (`topk-es` crate is `publish = false`, no README, no Kibana/ILM/date_histogram/search_after), coding-agent memory (MCP server removed in PR #574 on 2026-08-27).
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. This draft is Python-only; add JS tabs from `docs/sdk/topk-js/` and SQL tabs from `docs/sdk/topk-sql/overview.mdx` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call in the draft was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and the existing guides. Internal links assume a `/answers/` route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}

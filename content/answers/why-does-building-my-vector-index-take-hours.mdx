@@ -1,0 +1,66 @@
+---
+title: "Why does building my vector index take hours, and why do I have to babysit it?"
+description: "HNSW builds are single-threaded, memory-bound, and restart from zero. TopK indexes on write and compacts in the background. There is no build step."
+---
+
+## Short answer
+
+TopK has no `CREATE INDEX` step. Indexes are declared in the schema, maintained on every write, and compacted by a distributed background service. You never rebuild.
+
+```python
+from topk_sdk.schema import text, f32_vector, vector_index, keyword_index
+
+client.collections().create("docs", schema={
+    "title": text().required().index(keyword_index()),
+    "embedding": f32_vector(dimension=1024).required().index(vector_index(metric="cosine")),
+})
+# Start writing. Documents are queryable in under a second.
+```
+
+## The problem
+
+- pgvector: HNSW on 10 million vectors took more than 24 hours on 4 CPUs ([#300](https://github.com/pgvector/pgvector/issues/300)). A build on tens of millions was stuck at 29 percent after 19 hours with 40 GB of `maintenance_work_mem` ([#822](https://github.com/pgvector/pgvector/issues/822)). Parallel builds are still a top request ([#409](https://github.com/pgvector/pgvector/issues/409), [#500](https://github.com/pgvector/pgvector/issues/500)).
+- After the index exists, inserts crawl. One report went from 20 rows per second to 3 ([#810](https://github.com/pgvector/pgvector/issues/810)).
+- Weaviate users have asked for a reindex API since 2022 ([#2359](https://github.com/weaviate/weaviate/issues/2359), 70 reactions). Restarting a node reloads HNSW for "dozens of minutes" ([#7189](https://github.com/weaviate/weaviate/issues/7189)).
+- Qdrant's optimizer can loop forever ([#8885](https://github.com/qdrant/qdrant/issues/8885)) and search quality degrades until a rebuild ([#7147](https://github.com/qdrant/qdrant/issues/7147)).
+
+## How TopK handles it
+
+Per the [architecture](/architecture) page, writes land in a write-ahead log on object storage and are queryable at balanced consistency in roughly 750 ms at p99. A compactor merges log entries into read-optimized segments across many nodes in parallel. Old segments are replaced, never rebuilt in place.
+
+Practical effects:
+
+- Bulk load at up to about 70 MB/s or 30k vectors per second per partition. Use more partitions for more throughput.
+- Write speed does not drop after the index "exists" because there is no separate index lifecycle.
+- Changing a field's index means creating a new collection and reloading, same as any schema change. There is no in-place reindex, and none is needed for normal operation.
+
+## Related
+
+- [Architecture: write path](/architecture#write-path)
+- [Managing collections](/collections/manage)
+- [Limits](/limits)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Tier 2. Rank #6.**
+- **Evidence**: pgvector #300 (>24h on 4 CPU), #409 parallel builds (26 comments, 13 reactions), #500 (30 comments), #822 (stuck 29% after 19h, 40 GB maintenance_work_mem; mirrored supabase #35040), #807 17M vectors 1536 dims, #745/#969/#844 memory tuning, #810 inserts 20→3 rows/s (19 comments), #244 dead tuples recall loss, supabase discussion #22490 insert slowdown. Weaviate #2359 Reindex API (open since 2022-11, 70 reactions), #10675 (39 comments), #7189 HNSW load dozens of minutes on restart. Qdrant #5319 (open, 6 reactions), #7147, #8885 optimizer loop. LanceDB #1549, #1502. "The Case Against pgvector" (Nov 2025, HN 45798479, blocked) centers on real-time indexing.
+- **TopK sources**: `docs/architecture.mdx` write path: WAL on object storage, LSN ordering, LSM compaction distributed across nodes, ~70MB/s or 30k vectors/s per partition, ~300ms p99 write, ~750ms p99 write-to-queryable in balanced mode. Index declared inline in schema per `docs/collections/manage.mdx`. SQL: `CREATE INDEX` is disabled at `topk-sql/src/dialect.rs` line 76, indexes only inline in `CREATE TABLE`.
+- **Claim to verify**: "no in-place reindex, schema change means new collection". Inferred from the absence of an ALTER/update-schema API in `topk-py/topk_sdk/__init__.pyi` and `topk-sql` (`ALTER TABLE` unsupported). Confirm with the team whether adding an index to an existing collection is possible.
+- **No transactions**: bulk loads are not atomic. Mentioned on the Postgres page, worth a `<Note>` here too.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing all twelve. This is one of twelve. See `00-research-report.md` for the ranked list and full evidence.
+- **Readiness tiers**: Tier 1 (feature shipped and documented): filtered search, hybrid, multi-tenancy, read-your-writes, ColPali. Tier 2 (shipped, docs thin, or minor SDK gaps): RAM/cost, index build, Postgres SQL, agent memory, facets. Tier 3 (needs engineering or publishing before marketing): Elasticsearch compatibility, coding-assistant memory. This page's tier is stated in the page-specific notes.
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. Drafts are Python-only (plus SQL where relevant); add JS tabs from `docs/sdk/topk-js/` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and existing guides. Schema functions are `text()`, `int()`, `float()`, `bool()`, `timestamp()`, not `integer()`. `FieldSpec` holds exactly one index (`protos/topk/control/v1/schema.proto` line 7). Text predicates and logical filters go in separate `.filter()` calls, following the hybrid guide. Internal `/answers/...` links assume a route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}

@@ -1,0 +1,116 @@
+---
+title: "How do I search scanned PDFs and images with ColPali?"
+description: "Store hundreds of vectors per page and score them with MaxSim. Most databases cannot. TopK can, with 1-bit quantization to keep storage cheap."
+---
+
+## Short answer
+
+Use a `matrix` field with a `multi_vector_index`. Each page is one document holding all its patch embeddings. Query with `multi_vector_distance`.
+
+```python
+from topk_sdk.schema import text, matrix, multi_vector_index
+
+client.collections().create("pages", schema={
+    "source": text().required(),
+    "patches": matrix(dimension=128, value_type="f16").index(
+        multi_vector_index(metric="maxsim", quantization="1bit")
+    ),
+})
+```
+
+## The problem
+
+Invoices, contracts, engineering drawings, and old forms do not OCR well. Layout matters. Models like ColPali and ColQwen embed the page image directly, but produce roughly 1,000 vectors per page instead of one.
+
+Most vector databases store one vector per row:
+
+- Elasticsearch's request for multiple embeddings per document has been open since 2021 ([#72068](https://github.com/elastic/elasticsearch/issues/72068)). Its `rank_vectors` type only reranks a small set.
+- pgvector declined to support it ([#694](https://github.com/pgvector/pgvector/issues/694)).
+- Milvus has an open request with 37 comments ([#31581](https://github.com/milvus-io/milvus/issues/31581)).
+- Qdrant supports it but caps multivector size and users report 10k ColBERT points still indexing after three hours ([#5702](https://github.com/qdrant/qdrant/issues/5702)).
+
+Storage is the other issue. At full precision, one million pages is 100 to 500 GB of vectors that a RAM-resident engine must hold.
+
+## How TopK handles it
+
+Multi-vector fields are indexed with MaxSim as a first-class metric. An approximate stage prunes candidates, an exact stage rescores them.
+
+Ingest one page:
+
+```python
+import numpy as np
+
+page_embeddings = colpali.embed_image(page_png)  # shape (n_patches, 128)
+
+client.collection("pages").upsert([{
+    "_id": "invoice-2024-0117-p3",
+    "source": "invoice-2024-0117.pdf",
+    "patches": page_embeddings.astype(np.float16),  # numpy arrays are accepted directly
+}])
+```
+
+Query:
+
+```python
+from topk_sdk.query import select, field, fn
+
+query_embeddings = colpali.embed_query("total amount due in March")
+
+docs = client.collection("pages").query(
+    select(
+        "source",
+        score=fn.multi_vector_distance("patches", query_embeddings, candidates=200),
+    )
+    .filter(field("source").starts_with("invoice-2024"))
+    .sort(field("score"), asc=False)
+    .limit(5)
+)
+```
+
+Filters, keyword match, and partitions all work alongside the multi-vector score.
+
+## Keeping it cheap
+
+- `quantization="1bit"` or `"2bit"` cuts index size by 16x to 32x with small recall loss.
+- `value_type="f16"` halves raw storage.
+- All data lives on object storage. Pages nobody queries cost storage only.
+- Tune `candidates`, `width`, and `top_k` per the [multi-vector guide](/guides/multi-vector-search).
+
+## Limits
+
+- Bring your own image embeddings. Managed inference is text-only today.
+- 1,024 dimensions maximum per vector row.
+- 200 KB maximum document size, so store the page image elsewhere and keep the path.
+
+## Related
+
+- [Multi-vector search guide](/guides/multi-vector-search)
+- [Limits](/limits)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Rank**: #5 by popularity. Strongest single-issue signal is Elasticsearch #72068.
+- **Primary evidence**: Elasticsearch #72068 "Allow representing a document with multiple embeddings" (open since 2021-04-22, 30 comments, 50 reactions, cites ColBERT); #158309 rank_vectors tech preview for second-order ranking only. Milvus #31581 (open, 37 comments), #31920 (8 reactions), #37090, #25639. Weaviate #2465 (96 reactions), #4278 (14). pgvector #694 closed no support, #970, #623 closed same day. Qdrant #3684 shipped ColBERT but #7888 prefetch performance, #9408 1,048,576-element cap, #5702 10k points still indexing after 3h. LanceDB #2481 ColBERT only as Python reranker. LlamaIndex has only a `ColPaliRerank` postprocessor, no multi-vector store. Storage math (~1,030 patches/page, 100-500 GB per 1M pages) from spheron.network blog, secondary source.
+- **TopK sources**: `docs/guides/multi-vector-search.mdx` lines 57-69 (schema), 111-135 (upsert with ndarray or `topk_sdk.data.matrix`), 174-190 (query with `candidates`), 261-271 (quantization, width, top_k tuning). `multi_vector_index` signature in `topk-py/topk_sdk/schema/__init__.pyi` lines 414-419: `metric="maxsim"`, `quantization` in `"1bit"|"2bit"|"scalar"`, `width`, `top_k`. `docs/limits.mdx`: 1024 multi-vector dims, 200KB doc cap.
+- **Code**: `colpali.embed_image` and `colpali.embed_query` are placeholders. Replace with a real snippet (e.g. `colpali_engine` ColQwen2 or ColPali v1.3) and pin the dimension (ColPali is 128). `field("source").starts_with(...)` verified at `topk-py/topk_sdk/query/__init__.pyi` line 267.
+- **Compression claim**: "16x to 32x" is arithmetic (f16→1bit = 16x, f32→1bit = 32x), not a measured figure. Recall loss is described qualitatively in the guide as "most approximate". Get a real number or soften.
+- **Inference**: managed `semantic_index` is text-only (Iso-ModernColBERT). Image embeddings must be computed client-side. Do not imply TopK embeds images.
+- **ES API angle**: `topk-es` accepts a matrix `query_vector` in `knn` against a `rank_vectors` mapping (`topk-es/src/engine/score.rs` lines 223-236). Upstream Elasticsearch cannot do that through `knn`. Unpublished today, but a strong future hook for this page.
+- **Vertical framing**: invoices, contracts, drawings, forms. TopK docs mention "specific clauses, tables, structured data" and "localized image regions" in the multi-vector guide but never a vertical.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing them. This is one of five.
+- **Why this batch**: these five problems were ranked highest on (a) cross-repo popularity, (b) the TopK feature being shipped AND documented today, (c) low risk of overpromising. Deferred topics (need engineering first): pgvector migration guide, aggregations/facets (quantile and count_distinct are Rust-only), recency ranking (`decay`/`saturate` Rust-only), Elasticsearch replacement (`topk-es` crate is `publish = false`, no README, no Kibana/ILM/date_histogram/search_after), coding-agent memory (MCP server removed in PR #574 on 2026-08-27).
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. This draft is Python-only; add JS tabs from `docs/sdk/topk-js/` and SQL tabs from `docs/sdk/topk-sql/overview.mdx` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call in the draft was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and the existing guides. Internal links assume a `/answers/` route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}

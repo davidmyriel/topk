@@ -1,0 +1,104 @@
+---
+title: "How do I keep each customer's data separate without creating thousands of collections?"
+description: "One collection, one partition per tenant. No per-collection memory cost, no collection cap, atomic tenant delete."
+---
+
+## Short answer
+
+Pass the tenant ID as the partition name. Partitions are created on first write, fully isolated, and cost nothing when idle.
+
+```python
+client.collection("docs", "acme-corp").upsert([
+    {"_id": "d1", "title": "Q3 report", "body": "..."},
+])
+
+client.collection("docs", "acme-corp").query(
+    select("title").filter(match("report")).limit(10)
+)
+```
+
+## The problem
+
+You have a SaaS product. Customer A must never see customer B's documents. The obvious answer is one collection per customer.
+
+That breaks at scale:
+
+- Qdrant users hit out-of-memory at 5,000 per-user collections ([#5032](https://github.com/qdrant/qdrant/issues/5032)). Empty collections still consume RAM. Maintainers advise against many collections.
+- Milvus caps at 65,536 collections and warns that thousands slow the server.
+- Weaviate's own issue says many classes "does not scale well" ([#2970](https://github.com/weaviate/weaviate/issues/2970)).
+- Elasticsearch limits shards per node to 1,000. Index-per-tenant hits it fast.
+
+The alternative, a `tenant_id` filter on one big collection, runs into the [filtered-search problem](/answers/why-does-filtered-vector-search-return-fewer-results) and shares one index across every customer.
+
+## How TopK handles it
+
+A partition is a physically separate slice of a collection with its own indexes. Reads and writes scale with the number of partitions. A dormant tenant lives on object storage only.
+
+Same schema, same query features, same SDK. Only the partition name changes.
+
+```python
+tenant = request.user.org_id
+
+client.collection("docs", tenant).query(
+    select(
+        "title",
+        score=fn.semantic_similarity("body", query_text),
+    )
+    .sort(field("score"), asc=False)
+    .limit(10)
+)
+```
+
+List and delete tenants:
+
+```python
+for p in client.collection("docs").list_partitions(prefix="acme-"):
+    print(p.name)
+
+# removes every document for the tenant atomically
+client.collection("docs").delete_partition("acme-corp")
+```
+
+From SQL:
+
+```sql
+SELECT title FROM docs$acme_corp WHERE match('report') LIMIT 10;
+DELETE FROM docs$acme_corp;
+```
+
+## Limits
+
+- 1 billion documents per partition.
+- Write throughput is per partition, so heavy tenants do not slow light ones.
+- Cross-tenant queries need a separate shared collection, by design.
+
+## Related
+
+- [Multi-tenancy](/concepts#multi-tenancy)
+- [Limits](/limits)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Rank**: #4 by popularity. Strong SaaS relevance.
+- **Primary evidence**: Qdrant #5032 (>5,000 per-user collections OOM, open 2024-09), #5836 (empty collections consume RAM), #3744 (maintainers advise against many collections), #1322 cross-collection query wontfix (open since 2023-01, 13 comments). Weaviate #2970 (17 comments, 19 reactions, states many classes "does not scale well"), #2785, #3500 cross-tenant queries (27 reactions), #2565 namespaces (25), #4234 paginate tenants (32 comments), #5071 memory creep, #5892 HOT→FROZEN offload returns stale results (open since 2024-09). Milvus #4036 (4096 partition cap), #23553, discussion #3287 (2020, still active 2026), 65,536 collection cap, docs say partition-key gives "relatively weak data isolation". Elasticsearch #20705 (max_shards_per_node=1000), discuss.elastic.co 341606 and 22699 (unverified), Elastic blog "found-multi-tenancy".
+- **TopK sources**: `docs/concepts.mdx` lines 36-91 (multi-tenancy, implicit partition creation, `PartitionNotFound` on missing partition). `docs/limits.mdx`: 1B+ docs per partition, 1k+ QPS per partition, write throughput ~70MB/s or 30k vectors/s per partition (from `docs/architecture.mdx`). `partition_service.proto` lines 5-9: delete is atomic. `docs/sdk/topk-sql/overview.mdx`: `collection$partition` syntax, `DELETE FROM t$p` drops partition.
+- **Code**: `client.collection(name, partition_name)` per concepts. `list_partitions(prefix=)` returns `PartitionListIterator` yielding `Partition` with `.name` and `.created_at` (`topk-py/topk_sdk/__init__.pyi` lines 254-329). `delete_partition(name)` line 328. SQL identifier `docs$acme_corp`: verify whether hyphens are allowed in partition names in SQL; the Python example uses `acme-corp` and SQL uses `acme_corp` to sidestep this. Confirm and unify.
+- **Gaps to flag**: JS partition APIs (`listPartitions`, `deletePartition`) appear only in `topk-js/index.d.ts`, nowhere in docs. The ES-compatible API cannot address partitions (index-name regex in `topk-es/src/api/path.rs` line 15 excludes `$`). Cross-tenant search requires a separate collection.
+- **Cost story**: "dormant tenant costs object storage only" is inferred from the architecture (object storage is the only durable store), not a stated pricing fact. Check with pricing before publishing.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing them. This is one of five.
+- **Why this batch**: these five problems were ranked highest on (a) cross-repo popularity, (b) the TopK feature being shipped AND documented today, (c) low risk of overpromising. Deferred topics (need engineering first): pgvector migration guide, aggregations/facets (quantile and count_distinct are Rust-only), recency ranking (`decay`/`saturate` Rust-only), Elasticsearch replacement (`topk-es` crate is `publish = false`, no README, no Kibana/ILM/date_histogram/search_after), coding-agent memory (MCP server removed in PR #574 on 2026-08-27).
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. This draft is Python-only; add JS tabs from `docs/sdk/topk-js/` and SQL tabs from `docs/sdk/topk-sql/overview.mdx` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call in the draft was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and the existing guides. Internal links assume a `/answers/` route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}

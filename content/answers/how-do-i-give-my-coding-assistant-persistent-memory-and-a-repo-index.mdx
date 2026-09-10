@@ -1,0 +1,87 @@
+---
+title: "How do I give my coding assistant persistent memory and a repo index that doesn't eat my disk?"
+description: "Local embedding indexes hit tens of gigabytes and forget everything between sessions. Move the index and the memory server-side."
+---
+
+## Short answer
+
+Index code and notes into TopK with `keyword_index()`, `ngram_index()`, and `semantic_index()` on separate fields. Search with exact identifiers, regex, and meaning in one query. Keep one partition per repo or per developer. Nothing lives on the laptop.
+
+```python
+from topk_sdk.schema import text, int, keyword_index, ngram_index, semantic_index
+from topk_sdk.query import select, field, fn, match
+
+client.collections().create("code", schema={
+    "path": text().required().index(ngram_index()),      # substring and regex on paths
+    "chunk": text().required().index(keyword_index()),    # BM25 on identifiers and tokens
+    "summary": text().index(semantic_index()),            # one-line description, embedded server-side
+    "line": int().required(),
+})
+
+hits = client.collection("code", "repo-payments").query(
+    select(
+        "path", "line", "chunk",
+        sem=fn.semantic_similarity("summary", "where do we retry failed webhooks"),
+        kw=fn.bm25_score(),
+    )
+    .filter(match("webhook"))
+    .filter(field("path").regexp_match(r"\.py$"))
+    .sort(field("sem") * 0.7 + field("kw") * 0.3, asc=False)
+    .limit(10)
+)
+```
+
+## The problem
+
+- Continue users report local index files of 30 to 50 GB ([#2917](https://github.com/continuedev/continue/issues/2917), [#4309](https://github.com/continuedev/continue/issues/4309)), extension-host crashes, and repos that never finish indexing. Both closed as not planned.
+- Cursor's forum has at least eight "indexing stuck" threads. One reports 3 to 5 seconds per C++ file.
+- Sourcegraph removed Cody's embeddings entirely, citing storage and update burden.
+- Claude Code users have filed roughly ten duplicate requests for cross-session memory ([#34556](https://github.com/anthropics/claude-code/issues/34556), [#14227](https://github.com/anthropics/claude-code/issues/14227)). One built their own after "59 compactions".
+
+Embedding a monorepo on a laptop, storing the vectors locally, and re-embedding on every change does not scale.
+
+## How TopK handles it
+
+- **Three index types in one query**. BM25 on code tokens and identifiers, ngram for `contains` and regex on paths, semantic on a short summary for intent. One index per field, all scored together.
+- **Server-side embeddings**. No local model, no GPU, no re-embedding pipeline. Upsert text.
+- **Partitions**. One per repo, branch, or developer. Delete a partition when a branch is gone.
+- **Read-your-writes**. Index a file save and query it in the same command with an LSN.
+- **Memory**. Same collection pattern as [agent memory](/answers/how-do-i-build-agent-memory-that-favors-recent-and-stays-private): timestamped notes, recency in the ranking.
+
+## Limits
+
+- 200 KB per document. Chunk files by function or by N lines.
+- TopK does not parse code or compute symbols. Use tree-sitter or your own chunker, then upsert.
+- One index per field. To get BM25 and semantic on the same text, store it in two fields or keep a separate summary field as above.
+- No official plugin for Continue, Cursor, Cody, or Claude Code today. You would wire it through a custom context provider or an MCP server you write.
+
+## Related
+
+- [Keyword search guide](/guides/keyword-search)
+- [NGram index](/collections/manage#ngram-index)
+- [Multi-tenancy](/concepts#multi-tenancy)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Tier 3. Engineering gap, not a docs gap.** No MCP server (removed in PR #574, 2026-08-27 along with `docs/mcp-server.mdx`), no Continue context provider, no Cursor or Cody hook, no Claude Code plugin. The page is honest about that in Limits, but marketing it before an on-ramp exists will produce "how do I actually connect this" support tickets. Consider publishing only after a reference MCP server or Continue provider exists. Note `topk-cli/src/main.rs` line 63 has an undocumented agent mode (`CLAUDECODE`/`AGENT` env var appends README to `--help`), a small existing signal of intent.
+- **Evidence**: Continue #2917 (~50 GB index.sqlite, closed not planned), #4309 (~30 GB, closed not planned), #2525, #1774, #1583, #4756, #1622, #9004, #866, #856, #3393, #1310 (~12 threads). Cursor forum threads t/102, t/759, t/34727, t/60586, t/75839, t/104831, t/106927, t/20965 (forum blocked; from search snippets). Sourcegraph blog "How Cody understands your codebase" on dropping embeddings. claude-code #34556, #34192, #14227 (closed not planned), #5618, #5619, #21854, #27298, #10654, #32627, #47299. Founder signal: rust-lang/regex PR #1381 (2026-08-04) shows user-supplied regex is a live TopK production workload. Reserved-but-unimplemented `KEYWORD_INDEX_TYPE_CODE = 3` and `KEYWORD_INDEX_TYPE_LOG = 4` are commented out at `protos/topk/control/v1/schema.proto` lines 129-130, so a code-aware analyzer may be planned.
+- **TopK sources**: `ngram_index()` at `docs/collections/manage.mdx` line 312; `regexp_match` at `docs/collections/query.mdx` line 1352; `keyword_index` and `semantic_index` per hybrid guide; `int()` at `schema/__init__.pyi` line 71. One index per field (`schema.proto` FieldSpec line 7), which is why `chunk` and `summary` are separate fields. 200 KB doc cap from `docs/limits.mdx`.
+- **Code caveat**: `summary` as a separate semantic field means the app must produce a one-line description per chunk (an LLM call or the docstring). Alternative: store the chunk text twice, once keyword-indexed and once semantic-indexed. Pick one and say so.
+- **Cross-link**: agent memory page for the memory half.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing all twelve. This is one of twelve. See `00-research-report.md` for the ranked list and full evidence.
+- **Readiness tiers**: Tier 1 (feature shipped and documented): filtered search, hybrid, multi-tenancy, read-your-writes, ColPali. Tier 2 (shipped, docs thin, or minor SDK gaps): RAM/cost, index build, Postgres SQL, agent memory, facets. Tier 3 (needs engineering or publishing before marketing): Elasticsearch compatibility, coding-assistant memory. This page's tier is stated in the page-specific notes.
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. Drafts are Python-only (plus SQL where relevant); add JS tabs from `docs/sdk/topk-js/` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and existing guides. Schema functions are `text()`, `int()`, `float()`, `bool()`, `timestamp()`, not `integer()`. `FieldSpec` holds exactly one index (`protos/topk/control/v1/schema.proto` line 7). Text predicates and logical filters go in separate `.filter()` calls, following the hybrid guide. Internal `/answers/...` links assume a route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}

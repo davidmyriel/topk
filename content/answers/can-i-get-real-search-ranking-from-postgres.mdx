@@ -1,0 +1,103 @@
+---
+title: "Can I get real search ranking and fast substring search without leaving the Postgres ecosystem?"
+description: "Postgres full-text search lacks BM25 and LIKE '%term%' crawls. TopK speaks the Postgres wire protocol with BM25, ngram, and vector search built in."
+---
+
+## Short answer
+
+Connect with `psql`, `psycopg2`, `node-postgres`, or JDBC. Create a table with inline indexes. Query with `bm25_score()`, `LIKE`, regex, and `vector_distance()` in plain SQL.
+
+```bash
+psql "host=<region>.sql.topk.io port=5432 user=topk password=<api-key> dbname=topk"
+```
+
+```sql
+CREATE TABLE tickets (
+    subject TEXT NOT NULL INDEX keyword_index(),
+    body    TEXT          INDEX ngram_index(),
+    summary TEXT          INDEX semantic_index()
+);
+
+SELECT _id, subject, bm25_score() AS score
+FROM tickets
+WHERE match('refund delayed', subject)
+ORDER BY score DESC
+LIMIT 10;
+
+SELECT _id, subject
+FROM tickets
+WHERE body LIKE '%ERR-4031%'
+LIMIT 10;
+```
+
+## The problem
+
+- Postgres `ts_rank` has no inverse document frequency, no term saturation, no length normalization. Ranking is poor. Supabase users asked for a BM25 extension ([discussion #18061](https://github.com/orgs/supabase/discussions/18061), 59 upvotes). ParadeDB has around 9,000 stars for solving exactly this.
+- `LIKE '%term%'` with `pg_trgm` produced a 58 GB index on 83 million rows and 42 second queries (pgsql-general list). Short or common patterns fall back to sequential scans.
+- The usual fix is running Elasticsearch next to Postgres and syncing with Debezium, Logstash, or triggers. ZomboDB (4,700 stars) and pgsync (1,400 stars) exist because that sync is painful.
+
+## How TopK handles it
+
+One engine, Postgres protocol on the front:
+
+- `keyword_index()` gives BM25 with tunable `b` and `k1`.
+- `ngram_index()` accelerates `LIKE '%x%'`, `contains()`, and `~` regex.
+- `semantic_index()` embeds text server-side. `semantic_similarity(field, 'query text')` needs no embedding call in your app.
+- `vector_index()` on `f32_vector(n)` columns for your own embeddings.
+- `GROUP BY` with `HAVING`, `EXTRACT`, `CASE WHEN`, `BETWEEN`, `IN`, prepared statements with `$1`.
+
+Hybrid ranking in SQL:
+
+```sql
+SELECT _id, subject,
+       semantic_similarity(summary, 'customer wants money back') AS sem,
+       bm25_score() AS kw
+FROM tickets
+WHERE match('refund', subject) AND created_ts > TIMESTAMP '2026-01-01'
+ORDER BY sem * 0.7 + kw * 0.3 DESC
+LIMIT 10;
+```
+
+## What does not work
+
+Read this before migrating.
+
+- No `JOIN`, subqueries, CTEs, or `UNION`. Denormalize filter columns into the search table.
+- No `SELECT *`. List columns.
+- `BEGIN`/`COMMIT` are accepted and ignored. There are no transactions.
+- `ORDER BY` requires `LIMIT`. Single `ORDER BY` key.
+- No `ALTER TABLE`, `CREATE INDEX`, `RETURNING`, `ON CONFLICT`, row-level security, or stored functions.
+- Metabase, dbt, and ORM migrations expect the things above and will not work. Raw-SQL clients and Grafana panels do.
+
+TopK is a search table next to your Postgres, not a Postgres replacement.
+
+## Related
+
+- [SQL reference](/sdk/topk-sql/overview)
+- [Keyword search guide](/guides/keyword-search)
+- [NGram index](/collections/manage#ngram-index)
+
+
+{/*
+## EDITOR NOTES (not for publication)
+
+### Page-specific context
+
+- **Tier 2. Rank #7.** Highest adoption-risk page: the "what does not work" section is load-bearing. Do not shorten it.
+- **Evidence**: Supabase discussion #18061 pg_bm25 (59 upvotes, 18 comments), ParadeDB ~9.3k stars, Timescale pg_textsearch launch blog quote on ts_rank lacking IDF/saturation/length norm, reports of ts_rank going to 25-30s at 800k rows. pg_trgm: pgsql-general "GIN, pg_trgm and large table" (83M rows, 58 GB index, 42s). ZomboDB ~4.7k stars, pgsync ~1.4k, Debezium ES streaming guide, kafka-connect-jdbc #1421 delete handling. Neon and ParadeDB both market "no second system". pgvector #461 dimension cap (58 comments, 36 reactions), #521 quantization (open, 23 comments). Prisma #18442 open since 2023 with duplicate chain (#26546, #28867). Drizzle #2424, #5792. Metabase #44188 pgvector columns break sync.
+- **TopK sources**: `docs/sdk/topk-sql/overview.mdx` (mirror of `topk-sql/README.md`): connection string, `CREATE TABLE ... INDEX`, operator table lines 155-165, `bm25_score` lines 265-280, timestamps lines 184-196, GROUP BY lines 406-433. Unsupported list from `topk-sql/src/stmt/select.rs` (SELECT * line 210, JOIN 160, CTE 118, subquery 124, UNION 126, ORDER BY without LIMIT 284, multi-key ORDER BY was rejected per agent report but `select.rs` shows multi-key supported; README says single key. Verify which is current). `BEGIN/COMMIT` no-op at `topk-sql/src/stmt/mod.rs` lines 94-101. `LIKE` restricted to prefix/contains/literal at `topk-sql/src/expr/logical.rs` lines 122-160.
+- **Code**: `created_ts > TIMESTAMP '2026-01-01'` uses the TIMESTAMP literal per SQL README line 195. `semantic_similarity` and `bm25_score` are only legal at top of a projection item (`topk-sql/src/expr/function.rs` lines 283-286); the ORDER BY uses aliases `sem` and `kw`, which is the documented pattern. Verify that arithmetic on aliases in ORDER BY is accepted.
+- **Positioning line**: "search table next to your Postgres, not a replacement" is deliberate. Agents flagged that no-JOIN means the sync problem moves rather than disappears.
+
+
+### Shared context (same on every page in this batch)
+
+- **Origin**: drafted 2026-09-10 in a Claude Code session on repo `davidmyriel/topk` (branch `claude/topk-recent-removals-lo4m8j`). The user asked for research into popular, recurring real-user problems (measured by GitHub issue engagement) that TopK solves, then asked for "answers" pages addressing all twelve. This is one of twelve. See `00-research-report.md` for the ranked list and full evidence.
+- **Readiness tiers**: Tier 1 (feature shipped and documented): filtered search, hybrid, multi-tenancy, read-your-writes, ColPali. Tier 2 (shipped, docs thin, or minor SDK gaps): RAM/cost, index build, Postgres SQL, agent memory, facets. Tier 3 (needs engineering or publishing before marketing): Elasticsearch compatibility, coding-assistant memory. This page's tier is stated in the page-specific notes.
+- **Product context**: TopK removed its File Search / datasets / "ask" RAG product on 2026-08-27 (PRs #574, #576, #578). Do not reference datasets, `ask()`, `upload`, the MCP server, or `/datasets/*` docs pages. The retrieval engine (collections, partitions, hybrid query, SQL endpoint) is the product.
+- **Style source**: `docs/guides/true-hybrid-search.mdx` and `docs/concepts.mdx`. Frontmatter is Mintlify (`title`, `description`). Existing guides use `<Info>` prerequisite blocks, `<CodeGroup>` with Python and Javascript tabs, and `<Note>`/`<Warning>`. Drafts are Python-only (plus SQL where relevant); add JS tabs from `docs/sdk/topk-js/` where useful.
+- **Voice**: plain language for an everyday builder. Lead with the answer. Name the competitor failure concretely, link the issue, then show TopK. Keep limits honest.
+- **Evidence caveats**: GitHub issue numbers, dates, and states were fetched directly. Comment and reaction counts came from the GitHub search API where available and are approximate. HN, Stack Overflow, discuss.elastic.co, Reddit, Pinecone forum, and vendor sites were blocked by the session proxy, so anything from those is URL-cited only and unverified. Re-verify any count before publishing.
+- **API verification done**: every Python call was checked against `topk-py/topk_sdk/__init__.pyi`, `topk-py/topk_sdk/query/__init__.pyi`, `topk-py/topk_sdk/schema/__init__.pyi`, and existing guides. Schema functions are `text()`, `int()`, `float()`, `bool()`, `timestamp()`, not `integer()`. `FieldSpec` holds exactly one index (`protos/topk/control/v1/schema.proto` line 7). Text predicates and logical filters go in separate `.filter()` calls, following the hybrid guide. Internal `/answers/...` links assume a route that does not exist yet; `docs/docs.json` needs a nav entry.
+- **Navigation**: no "answers" section exists in `docs/docs.json` today. topk.io could not be fetched to confirm whether a marketing-site answers section exists or its format. If the target is the marketing site rather than docs, strip Mintlify components.
+*/}
