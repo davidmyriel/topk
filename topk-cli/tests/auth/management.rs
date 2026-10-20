@@ -12,6 +12,9 @@ use tonic::{Code, Request, Response, Status};
 use topk::management::proto::collection_service_server::{
     CollectionService, CollectionServiceServer,
 };
+use topk::management::proto::data_plane_service_server::{
+    DataPlaneService, DataPlaneServiceServer,
+};
 use topk::management::proto::project_service_server::{ProjectService, ProjectServiceServer};
 use topk::management::proto::region_service_server::{RegionService, RegionServiceServer};
 use topk::management::proto::*;
@@ -23,6 +26,7 @@ use super::common::{response, seed, Server as OAuthServer};
 #[derive(Clone)]
 struct Services {
     requests: mpsc::UnboundedSender<(String, String)>,
+    projects: usize,
 }
 
 impl Services {
@@ -50,11 +54,13 @@ impl ProjectService for Services {
     ) -> Result<Response<ListProjectsResponse>, Status> {
         self.record("projects", &request);
         Ok(Response::new(ListProjectsResponse {
-            projects: vec![Project {
-                project_id: "project-1".into(),
-                name: "Example".into(),
-                ..Default::default()
-            }],
+            projects: (1..=self.projects)
+                .map(|n| Project {
+                    project_id: format!("project-{n}"),
+                    name: "Example".into(),
+                    ..Default::default()
+                })
+                .collect(),
         }))
     }
 
@@ -135,6 +141,20 @@ impl RegionService for Services {
     }
 }
 
+#[tonic::async_trait]
+impl DataPlaneService for Services {
+    async fn mint_access_token(
+        &self,
+        request: Request<MintAccessTokenRequest>,
+    ) -> Result<Response<MintAccessTokenResponse>, Status> {
+        self.record("mint", &request);
+        Ok(Response::new(MintAccessTokenResponse {
+            token: format!("data-plane-{}", request.into_inner().project_id),
+            expires_at: 1_700_000_000,
+        }))
+    }
+}
+
 struct Fixture {
     oauth: OAuthServer,
     dir: TempDir,
@@ -145,6 +165,10 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_projects(1).await
+    }
+
+    async fn with_projects(projects: usize) -> Self {
         let oauth = OAuthServer::new().await;
         let dir = TempDir::new().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -153,13 +177,15 @@ impl Fixture {
         let (requests_tx, requests) = mpsc::unbounded_channel();
         let services = Services {
             requests: requests_tx,
+            projects,
         };
         let (shutdown, stopped) = oneshot::channel();
         tokio::spawn(async move {
             Server::builder()
                 .add_service(ProjectServiceServer::new(services.clone()))
                 .add_service(CollectionServiceServer::new(services.clone()))
-                .add_service(RegionServiceServer::new(services))
+                .add_service(RegionServiceServer::new(services.clone()))
+                .add_service(DataPlaneServiceServer::new(services))
                 .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async {
                     let _ = stopped.await;
                 })
@@ -343,4 +369,43 @@ async fn authentication_failures_never_reach_management_server() {
     assert!(std::error::Error::source(&error).is_some());
     ctx.oauth.request().await;
     assert!(ctx.requests.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn data_plane_token_uses_the_only_project_or_the_given_one() {
+    let mut ctx = Fixture::new().await;
+    ctx.login(3600).await;
+    let token = ctx.client.data_plane_token(None).await.unwrap();
+    assert_eq!(token.token, "data-plane-project-1");
+    assert_eq!(token.project_id, "project-1");
+    assert_eq!(token.expires_at, 1_700_000_000);
+    ctx.request("projects", "access").await;
+    ctx.request("mint", "access").await;
+
+    let token = ctx
+        .client
+        .data_plane_token(Some("project-9"))
+        .await
+        .unwrap();
+    assert_eq!(token.token, "data-plane-project-9");
+    ctx.request("mint", "access").await;
+    assert!(ctx.requests.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn data_plane_token_needs_a_project_choice_when_ambiguous() {
+    for (projects, message) in [
+        (0, "topk project create"),
+        (
+            2,
+            "pass --project (or set TOPK_PROJECT) to one of: project-1 (Example), project-2",
+        ),
+    ] {
+        let mut ctx = Fixture::with_projects(projects).await;
+        ctx.login(3600).await;
+        let err = ctx.client.data_plane_token(None).await.err().unwrap();
+        assert!(err.to_string().contains(message), "{err:#}");
+        ctx.request("projects", "access").await;
+        assert!(ctx.requests.try_recv().is_err());
+    }
 }

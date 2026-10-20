@@ -8,7 +8,7 @@ use topk_rs::{Client, ClientConfig};
 
 use crate::auth::{Auth, Config};
 use crate::config;
-use crate::management::Client as ManagementClient;
+use crate::management::{Client as ManagementClient, DataPlaneToken};
 
 #[derive(clap::Args, Clone)]
 pub struct Endpoint {
@@ -30,6 +30,16 @@ pub struct Endpoint {
         help_heading = "Global options"
     )]
     pub region: Option<String>,
+
+    /// Project to use when authenticating with `topk login` instead of an API key
+    /// (default: the organization's only project)
+    #[arg(
+        long,
+        env = "TOPK_PROJECT",
+        global = true,
+        help_heading = "Global options"
+    )]
+    pub project: Option<String>,
 
     /// API domain; the endpoint is <REGION>.api.<HOST>
     #[arg(
@@ -76,14 +86,28 @@ impl Endpoint {
         Ok(ManagementClient::new(endpoint, self.auth()?))
     }
 
-    pub fn client(&self) -> Result<Client> {
-        let api_key = self
-            .api_key()
-            .context("API key not set. Set TOPK_API_KEY environment variable or pass --api-key.")?;
+    /// Mints a data plane token for `--project`, or the organization's only project.
+    pub async fn data_plane_token(&self) -> Result<DataPlaneToken> {
+        let project = self.project.as_deref().filter(|v| !v.is_empty());
+        self.management()?.data_plane_token(project).await
+    }
+
+    /// An API key wins; otherwise the `topk login` session mints a token.
+    pub async fn client(&self) -> Result<Client> {
         let region = self.region.as_deref().filter(|v| !v.is_empty()).context(
             "--region is required (or set TOPK_REGION). \
-             List available regions at https://docs.topk.io/regions",
+             List available regions with `topk region list`",
         )?;
+        let api_key = match self.api_key() {
+            Some(api_key) => api_key,
+            None => self
+                .data_plane_token()
+                .await
+                .context(
+                    "authenticating with the `topk login` session (no TOPK_API_KEY or --api-key)",
+                )?
+                .token,
+        };
         // A batch tool rides out `SlowDown`: retries never run out, an hour of
         // continuous throttling fails the request, and `--resume` picks up.
         Ok(Client::new(

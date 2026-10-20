@@ -108,7 +108,7 @@ impl Source {
             Uri::Duck(duck) => Source::Duck(duck.clone()),
             Uri::Es(url) => Source::Es(Es::new(url.clone())?),
             Uri::Mongo(url) => Source::Mongo(Mongo::connect(url).await?),
-            Uri::Topk(uri) => Source::Topk(Topk::connect(uri, endpoint)?),
+            Uri::Topk(uri) => Source::Topk(Topk::connect(uri, endpoint).await?),
         })
     }
 
