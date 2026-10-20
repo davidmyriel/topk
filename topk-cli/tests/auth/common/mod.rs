@@ -45,23 +45,24 @@ impl Server {
         let (requests_tx, requests) = mpsc::channel(32);
         let (replies, replies_rx) = mpsc::channel::<(u16, String)>(32);
         let replies_rx = Arc::new(Mutex::new(replies_rx));
-        let app = Router::new().route(
-            "/oauth/token",
-            post(move |body: String| {
-                let requests_tx = requests_tx.clone();
-                let replies_rx = replies_rx.clone();
-                async move {
-                    let mut replies_rx = replies_rx.lock().await;
-                    requests_tx.send(body).await.unwrap();
-                    let (status, body) = replies_rx.recv().await.unwrap_or((503, String::new()));
-                    (
-                        StatusCode::from_u16(status).unwrap(),
-                        [(header::CONTENT_TYPE, "application/json")],
-                        body,
-                    )
-                }
-            }),
-        );
+        // Token and device code requests share one queue, answered in order.
+        let handler = post(move |body: String| {
+            let requests_tx = requests_tx.clone();
+            let replies_rx = replies_rx.clone();
+            async move {
+                let mut replies_rx = replies_rx.lock().await;
+                requests_tx.send(body).await.unwrap();
+                let (status, body) = replies_rx.recv().await.unwrap_or((503, String::new()));
+                (
+                    StatusCode::from_u16(status).unwrap(),
+                    [(header::CONTENT_TYPE, "application/json")],
+                    body,
+                )
+            }
+        });
+        let app = Router::new()
+            .route("/oauth/token", handler.clone())
+            .route("/oauth/device/code", handler);
         let app = app.clone().nest("/tenant", app);
         let (shutdown, stopped) = oneshot::channel::<()>();
         tokio::spawn(async move {

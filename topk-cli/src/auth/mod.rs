@@ -8,12 +8,14 @@ use crate::auth::store::SessionStore;
 
 mod callback;
 mod config;
+mod device;
 mod login;
 mod oauth;
 mod session;
 mod store;
 
 pub use crate::auth::config::Config;
+pub use crate::auth::device::DeviceLogin;
 pub use crate::auth::login::Login;
 pub use crate::auth::oauth::AccessTokenClaims;
 
@@ -35,6 +37,10 @@ impl Auth {
 
     pub async fn login(&self, ports: &[u16]) -> Result<Login<'_>> {
         Login::new(self, ports).await
+    }
+
+    pub async fn device_login(&self) -> Result<DeviceLogin<'_>> {
+        DeviceLogin::new(self).await
     }
 
     pub async fn logout(&self) -> Result<()> {

@@ -1,5 +1,5 @@
 mod client;
-pub use client::Client;
+pub use client::{Client, DataPlaneToken};
 
 mod transport;
 pub use transport::Transport;

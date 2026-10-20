@@ -48,8 +48,10 @@ enum Commands {
     Project(topk::commands::project::Args),
     /// List available regions
     Region(topk::commands::region::Args),
-    /// Log in with your TopK account in the browser
+    /// Log in or sign up with your TopK account in the browser
     Login(topk::commands::login::LoginArgs),
+    /// Print a short-lived data plane token from the `topk login` session
+    Token,
 
     /// Bulk import from a database, file or object store
     #[cfg(feature = "import")]
@@ -92,7 +94,7 @@ async fn async_main() -> ExitCode {
     match run(&cli).await {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("{} {e:#}", "error:".red().bold());
+            eprintln!("{} {}", "error:".red().bold(), describe(&e));
             ExitCode::FAILURE
         }
     }
@@ -119,7 +121,23 @@ async fn run(cli: &Cli) -> anyhow::Result<ExitCode> {
             .await
         }
 
-        Some(Commands::Login(args)) => topk::commands::login::run(&cli.endpoint, args).await,
+        Some(Commands::Login(args)) => {
+            topk::commands::login::run(
+                &cli.endpoint,
+                args,
+                cli.output == Output::Json,
+                &mut std::io::stdout(),
+            )
+            .await
+        }
+        Some(Commands::Token) => {
+            topk::commands::token::run(
+                &cli.endpoint,
+                cli.output == Output::Json,
+                &mut std::io::stdout(),
+            )
+            .await
+        }
 
         #[cfg(feature = "import")]
         Some(Commands::Import(args)) => {
@@ -142,6 +160,25 @@ async fn run(cli: &Cli) -> anyhow::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// A gRPC call fails with a `Status` wrapping the client-side error that
+/// stopped it (e.g. not logged in); report that error, not the wrapper.
+fn describe(e: &anyhow::Error) -> String {
+    let mut parts = Vec::new();
+    for cause in e.chain() {
+        let Some(status) = cause.downcast_ref::<tonic::Status>() else {
+            parts.push(cause.to_string());
+            continue;
+        };
+        // The status repeats its source in its own message; the source follows in the chain.
+        if status.code() == tonic::Code::Unknown && std::error::Error::source(status).is_some() {
+            continue;
+        }
+        parts.push(format!("{} ({:?})", status.message(), status.code()));
+        break;
+    }
+    parts.join(": ")
 }
 
 /// Off unless `-v` or `RUST_LOG` (which wins); stdout carries results.

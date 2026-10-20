@@ -1,14 +1,15 @@
 use std::borrow::Cow;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::Utc;
 use oauth2::basic::{BasicClient, BasicErrorResponseType, BasicTokenResponse};
 use oauth2::{
-    AuthType, AuthUrl, AuthorizationCode, ClientId, CsrfToken, EndpointNotSet, EndpointSet,
-    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError, Scope,
+    AuthType, AuthUrl, AuthorizationCode, ClientId, CsrfToken, DeviceAuthorizationUrl,
+    DeviceCodeErrorResponseType, EndpointNotSet, EndpointSet, PkceCodeChallenge, PkceCodeVerifier,
+    RedirectUrl, RefreshToken, RequestTokenError, Scope, StandardDeviceAuthorizationResponse,
     TokenResponse, TokenUrl,
 };
 use reqwest::{redirect::Policy, Client as HttpClient};
@@ -40,7 +41,7 @@ impl OAuthConfig {
 }
 
 pub(crate) struct OAuthClient {
-    client: BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
+    client: BasicClient<EndpointSet, EndpointSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
     http: HttpClient,
     audience: String,
 }
@@ -58,6 +59,9 @@ impl OAuthClient {
             client: BasicClient::new(ClientId::new(config.client_id))
                 .set_auth_type(AuthType::RequestBody)
                 .set_auth_uri(AuthUrl::from_url(config.issuer.join("authorize")?))
+                .set_device_authorization_url(DeviceAuthorizationUrl::from_url(
+                    config.issuer.join("oauth/device/code")?,
+                ))
                 .set_token_uri(TokenUrl::from_url(config.issuer.join("oauth/token")?)),
             http: HttpClient::builder()
                 .connect_timeout(CONNECT_TIMEOUT)
@@ -100,6 +104,46 @@ impl OAuthClient {
             .request_async(&self.http)
             .await
             .context("exchanging the authorization code")?;
+        let session = session_from_response(res)?;
+        let claims = AccessTokenClaims::parse(&session.access_token, &self.audience);
+        Ok((session, claims))
+    }
+
+    /// Starts an RFC 8628 device authorization: the user approves on any device.
+    pub async fn authorize_device(&self) -> Result<StandardDeviceAuthorizationResponse> {
+        self.client
+            .exchange_device_code()
+            .add_scopes(SCOPES.map(|scope| Scope::new(scope.to_string())))
+            .add_extra_param("audience", &self.audience)
+            .request_async(&self.http)
+            .await
+            .context("starting the device login")
+    }
+
+    /// Polls until the user approves the device authorization, denies it, or it expires.
+    pub async fn exchange_device_code(
+        &self,
+        authorization: &StandardDeviceAuthorizationResponse,
+    ) -> Result<(Session, Option<AccessTokenClaims>)> {
+        let res = self
+            .client
+            .exchange_device_access_token(authorization)
+            .request_async(&self.http, tokio::time::sleep, None)
+            .await;
+        let res = match res {
+            Ok(res) => res,
+            Err(RequestTokenError::ServerResponse(error))
+                if *error.error() == DeviceCodeErrorResponseType::AccessDenied =>
+            {
+                bail!("login was denied")
+            }
+            Err(RequestTokenError::ServerResponse(error))
+                if *error.error() == DeviceCodeErrorResponseType::ExpiredToken =>
+            {
+                bail!("the login code expired. Run `topk login` again.")
+            }
+            Err(e) => return Err(e).context("waiting for the device login"),
+        };
         let session = session_from_response(res)?;
         let claims = AccessTokenClaims::parse(&session.access_token, &self.audience);
         Ok((session, claims))
