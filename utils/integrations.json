@@ -1,0 +1,60 @@
+{
+  "$comment": "Third-party integrations TopK claims in its docs. `bun run utils/check-integrations.ts` verifies each claim against the live source. status=listed: the claim is in our docs and must hold. status=unlisted: we know the listing went away; the check reports if it comes back.",
+  "integrations": [
+    {
+      "name": "Docling",
+      "status": "listed",
+      "page": "integrations/docling",
+      "checks": [
+        {
+          "type": "page",
+          "url": "https://docling-project.github.io/docling/examples/",
+          "contains": ["rag_topk", "TopK"],
+          "why": "Docling examples index lists RAG with TopK"
+        },
+        {
+          "type": "page",
+          "url": "https://docling-project.github.io/docling/_generated/examples/rag_topk/",
+          "contains": ["topk_sdk", "semantic_index", "HybridChunker"],
+          "why": "The RAG with TopK example still uses the TopK SDK"
+        }
+      ]
+    },
+    {
+      "name": "Haystack",
+      "status": "listed",
+      "page": "integrations/haystack",
+      "checks": [
+        {
+          "type": "page",
+          "url": "https://haystack.deepset.ai/integrations/topk",
+          "contains": ["topk-haystack", "TopKDocumentStore"],
+          "why": "Haystack integrations catalog lists TopK"
+        },
+        { "type": "pypi", "package": "topk-haystack" },
+        { "type": "github", "repo": "topk-io/topk-haystack" }
+      ]
+    },
+    {
+      "name": "Google ADK",
+      "status": "listed",
+      "page": "integrations/google-adk",
+      "checks": [
+        { "type": "github", "repo": "topk-io/adk-topk" }
+      ]
+    },
+    {
+      "name": "Superlinked",
+      "status": "unlisted",
+      "note": "docs.superlinked.com/run-in-production/vdbs/topk now redirects to superlinked.com/docs/integrations, which no longer mentions TopK (checked 2026-11-03).",
+      "checks": [
+        {
+          "type": "page",
+          "url": "https://superlinked.com/docs/integrations",
+          "contains": ["TopK"],
+          "why": "Superlinked integrations page lists TopK"
+        }
+      ]
+    }
+  ]
+}

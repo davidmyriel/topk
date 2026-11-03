@@ -5756,7 +5756,7 @@ results = client.collection("chunks").query(
 
 #### Get listed
 
-Once your integration ships, open a pull request against [topk-io/topk](https://github.com/topk-io/topk) that adds a page under `docs/integrations/`, or [contact us](https://topk.io/contact). We list integrations here, link to your project, and are glad to co-write an example or blog post.
+Once your integration ships, open a pull request against [topk-io/topk](https://github.com/topk-io/topk) that adds a page under `docs/integrations/` and an entry in `utils/integrations.json` (a weekly check uses it to confirm the integration is still live), or [contact us](https://topk.io/contact). We list integrations here, link to your project, and are glad to co-write an example or blog post.
 
 ## Integrations: Document processing
 
@@ -5905,7 +5905,7 @@ URL: https://docs.topk.io/integrations/google-adk
 #### Install
 
 ```bash
-pip install adk-topk
+pip install "adk-topk @ git+https://github.com/topk-io/adk-topk"
 ```
 
 Set `TOPK_API_KEY` and `TOPK_REGION` in your environment ([get an API key](https://console.topk.io/api-key), [list of regions](/regions)).

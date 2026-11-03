@@ -1,4 +1,4 @@
-.PHONY: docs generate-docs
+.PHONY: docs generate-docs check-integrations
 
 build:
 	cd topk-py && uvx maturin develop
@@ -9,3 +9,6 @@ docs: build
 	cd topk-js && yarn docs
 	bun run utils/sync-readmes.ts
 	bun run utils/generate-docs-llms-txt.ts generate
+
+check-integrations:
+	bun run utils/check-integrations.ts
