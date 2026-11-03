@@ -1,4 +1,4 @@
-.PHONY: docs generate-docs check-integrations
+.PHONY: docs generate-docs check-integrations evaluate-integration-candidates
 
 build:
 	cd topk-py && uvx maturin develop
@@ -12,3 +12,6 @@ docs: build
 
 check-integrations:
 	bun run utils/check-integrations.ts
+
+evaluate-integration-candidates:
+	bun run utils/evaluate-integration-candidates.ts

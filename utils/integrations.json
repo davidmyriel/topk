@@ -1,5 +1,5 @@
 {
-  "$comment": "Third-party integrations TopK claims in its docs. `bun run utils/check-integrations.ts` verifies each claim against the live source. status=listed: the claim is in our docs and must hold. status=unlisted: we know the listing went away; the check reports if it comes back.",
+  "$comment": "Third-party integrations TopK claims in its docs. New targets start in integration-candidates.json (see INTEGRATIONS.md). `bun run utils/check-integrations.ts` verifies each claim against the live source. status=listed: the claim is in our docs and must hold. status=unlisted: we know the listing went away; the check reports if it comes back.",
   "integrations": [
     {
       "name": "Docling",

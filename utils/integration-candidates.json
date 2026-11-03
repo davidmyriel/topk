@@ -1,0 +1,188 @@
+{
+  "$comment": "Projects TopK might integrate with. `bun run utils/evaluate-integration-candidates.ts` scores each one against the four gates in utils/INTEGRATIONS.md. Fit is a judgment you record here; popularity, mergeability and docs access are measured. Once an integration ships, move it to utils/integrations.json.",
+  "thresholds": {
+    "min_stars": 5000,
+    "max_days_since_push": 30,
+    "min_commits_90d": 30,
+    "min_release_days": 90,
+    "min_merged_pr_trend": 0.8,
+    "min_external_merge_rate": 0.3,
+    "min_docs_commits_90d": 5
+  },
+  "policy_phrases": {
+    "blocking": [
+      "not accepting new integration",
+      "no longer accepting new integration",
+      "new integrations are not accepted",
+      "not accepted as prs",
+      "will be automatically closed"
+    ],
+    "welcoming": [
+      "adding a new vector database",
+      "adding a new vector store",
+      "add a new handshake",
+      "add a new connector"
+    ],
+    "friction": [
+      "contributor license agreement",
+      "sign our cla",
+      "open an issue first",
+      "discuss before"
+    ]
+  },
+  "candidates": [
+    {
+      "name": "Chonkie",
+      "repo": "chonkie-inc/chonkie",
+      "pypi": "chonkie",
+      "fit": {
+        "score": 3,
+        "category": "chunking",
+        "strengths": ["server-side-embedding", "hybrid-bm25", "multi-vector"],
+        "rationale": "Chunks parsed documents and hands them to a vector DB through handshakes. TopK embeds on the server, so a handshake can skip Chonkie's embedding step. Closest match to the Docling pattern."
+      },
+      "peers": ["src/chonkie/handshakes/turbopuffer.py"],
+      "precedent_search": "handshake",
+      "policy": ["https://raw.githubusercontent.com/chonkie-inc/chonkie/HEAD/CONTRIBUTING.md"],
+      "docs": {
+        "repo": "chonkie-inc/chonkie",
+        "path": "docs",
+        "peer_page": "docs/oss/handshakes/turbopuffer-handshake.mdx"
+      }
+    },
+    {
+      "name": "Mem0",
+      "repo": "mem0ai/mem0",
+      "pypi": "mem0ai",
+      "fit": {
+        "score": 2,
+        "category": "agent-memory",
+        "strengths": ["server-side-embedding", "hybrid-bm25", "multi-tenancy"],
+        "rationale": "Memory is text-centric rather than document processing, but Mem0 now warns when a vector store lacks keyword_search, and TopK's native BM25 hybrid fills that gap."
+      },
+      "peers": ["mem0/vector_stores/turbopuffer.py"],
+      "precedent_search": "vector store",
+      "policy": ["https://raw.githubusercontent.com/mem0ai/mem0/HEAD/CONTRIBUTING.md"],
+      "docs": {
+        "repo": "mem0ai/mem0",
+        "path": "docs/components/vectordbs",
+        "peer_page": "docs/components/vectordbs/dbs/turbopuffer.mdx"
+      }
+    },
+    {
+      "name": "Mastra",
+      "repo": "mastra-ai/mastra",
+      "npm": "@mastra/core",
+      "fit": {
+        "score": 2,
+        "category": "agent-framework",
+        "strengths": ["server-side-embedding", "hybrid-bm25"],
+        "rationale": "Leading TypeScript agent framework with 20 vector stores on its integrations grid. topk-js already exists."
+      },
+      "peers": ["stores/turbopuffer/package.json"],
+      "precedent_search": "vector store",
+      "policy": ["https://raw.githubusercontent.com/mastra-ai/mastra/HEAD/CONTRIBUTING.md"],
+      "docs": {
+        "repo": "mastra-ai/mastra",
+        "path": "docs/src/content/en/integrations/vectors",
+        "peer_page": "docs/src/content/en/integrations/vectors/turbopuffer.mdx"
+      }
+    },
+    {
+      "name": "Langflow",
+      "repo": "langflow-ai/langflow",
+      "pypi": "langflow",
+      "fit": {
+        "score": 3,
+        "category": "workflow-builder",
+        "strengths": ["multi-vector", "images", "server-side-embedding"],
+        "rationale": "Merged a ColBERT/ColPali multi-vector bundle (NextPlaid) in 1.11.0. TopK is the hosted, no-server version of that story."
+      },
+      "peers": ["docs/docs/Components/bundles-nextplaid.mdx"],
+      "precedent_search": "bundle",
+      "policy": ["https://raw.githubusercontent.com/langflow-ai/langflow/HEAD/CONTRIBUTING.md"],
+      "docs": {
+        "repo": "langflow-ai/langflow",
+        "path": "docs/docs/Components",
+        "peer_page": "docs/docs/Components/bundles-nextplaid.mdx"
+      }
+    },
+    {
+      "name": "LangChain (docs listing)",
+      "repo": "langchain-ai/docs",
+      "pypi": "langchain",
+      "fit": {
+        "score": 3,
+        "category": "rag-framework",
+        "strengths": ["server-side-embedding", "hybrid-bm25", "multi-vector", "images"],
+        "rationale": "Largest distribution. Code lives in our own langchain-topk package; the only merge is a docs-listing PR. Langflow, Mem0 and Agno wrap LangChain vector stores."
+      },
+      "peers": ["src/oss/python/integrations/vectorstores/turbopuffer.mdx"],
+      "precedent_search": "vectorstore",
+      "policy": ["https://docs.langchain.com/oss/python/contributing/integrations-langchain"],
+      "policy_note": "LangChain's policy is that integration code is never merged; the docs PR is the merge. A 'blocking' hit here is expected.",
+      "docs": {
+        "repo": "langchain-ai/docs",
+        "path": "src/oss/python/integrations/vectorstores",
+        "peer_page": "src/oss/python/integrations/vectorstores/turbopuffer.mdx"
+      }
+    },
+    {
+      "name": "Agno",
+      "repo": "agno-agi/agno",
+      "pypi": "agno",
+      "fit": {
+        "score": 2,
+        "category": "agent-framework",
+        "strengths": ["images", "hybrid-bm25", "server-side-embedding"],
+        "rationale": "25+ vector DBs behind one interface and a multimodal-agent focus that matches TopK image fields. No Turbopuffer yet, so TopK would be the first object-storage-native option."
+      },
+      "peers": ["libs/agno/agno/vectordb/qdrant/qdrant.py", "libs/agno/agno/vectordb/pineconedb/pineconedb.py"],
+      "precedent_search": "vectordb",
+      "policy": ["https://raw.githubusercontent.com/agno-agi/agno/HEAD/CONTRIBUTING.md"],
+      "docs": {
+        "repo": "agno-agi/docs",
+        "path": null,
+        "peer_page": null
+      }
+    },
+    {
+      "name": "Unstructured",
+      "repo": "Unstructured-IO/unstructured-ingest",
+      "pypi": "unstructured-ingest",
+      "fit": {
+        "score": 3,
+        "category": "document-processing",
+        "strengths": ["server-side-embedding", "hybrid-bm25", "images", "object-storage-cost"],
+        "rationale": "Major document-processing product with destination connectors for vector DBs, each with its own docs page."
+      },
+      "peers": ["unstructured_ingest/processes/connectors/pinecone.py", "unstructured_ingest/processes/connectors/qdrant/qdrant.py"],
+      "precedent_search": "destination connector",
+      "policy": [],
+      "docs": {
+        "repo": null,
+        "path": null,
+        "peer_page": null
+      }
+    },
+    {
+      "name": "LlamaIndex",
+      "repo": "run-llama/llama_index",
+      "pypi": "llama-index",
+      "fit": {
+        "score": 3,
+        "category": "rag-framework",
+        "strengths": ["server-side-embedding", "hybrid-bm25", "multi-vector"],
+        "rationale": "Positions itself as the document processing platform for AI. Strong fit, but CONTRIBUTING.md auto-closes PRs that add integration packages, so the path is a standalone llama-index-vector-stores-topk package on PyPI."
+      },
+      "peers": [],
+      "precedent_search": "vector store",
+      "policy": ["https://raw.githubusercontent.com/run-llama/llama_index/HEAD/CONTRIBUTING.md"],
+      "docs": {
+        "repo": "run-llama/llama_index",
+        "path": "docs",
+        "peer_page": null
+      }
+    }
+  ]
+}
