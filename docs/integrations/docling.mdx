@@ -1,0 +1,67 @@
+---
+title: "Docling"
+description: "Parse complex PDFs with Docling and index text chunks and figures in TopK for hybrid, multi-vector retrieval."
+---
+
+[Docling](https://github.com/docling-project/docling) converts PDFs, DOCX, PPTX, and HTML into a structured `DoclingDocument` with layout, tables, and figures preserved. TopK stores and searches the output with no embedding pipeline in between.
+
+The official Docling example, [RAG with TopK](https://docling-project.github.io/docling/_generated/examples/rag_topk/), builds a cited-answer pipeline over a 69-page, chart-heavy PDF (the Federal Reserve's Financial Stability Report).
+
+## How the pipeline works
+
+<Steps>
+  <Step title="Parse">
+    `DocumentConverter` with `PdfPipelineOptions(generate_picture_images=True)` turns the PDF into a `DoclingDocument` and keeps a cropped image of every figure.
+  </Step>
+  <Step title="Chunk">
+    `HybridChunker` splits text along document structure. `contextualize()` prepends the section headings, so each chunk carries its place in the document. Each figure becomes its own record, built from its caption and the text Docling extracts from the chart.
+  </Step>
+  <Step title="Index">
+    Records go into a TopK collection whose `text` field has a `semantic_index()`. TopK embeds on the server, so the notebook loads no embedding model.
+  </Step>
+  <Step title="Search">
+    One hybrid query combines semantic similarity with a down-weighted BM25 score. A `should()` clause adds keyword scoring without filtering out documents that share no words with the question. Results carry page numbers for citations.
+  </Step>
+</Steps>
+
+## Schema and query
+
+```python
+from topk_sdk.schema import int, text, semantic_index
+from topk_sdk.query import select, field, fn, should
+
+KEYWORD_WEIGHT = 0.1  # BM25 nudges ranking; semantic similarity leads
+
+client.collections().create(
+    "docling-fsr",
+    schema={
+        "kind": text().required(),   # "text" or "figure"
+        "page": int().required(),    # page number, used for citations
+        "text": text().required().index(semantic_index()),
+    },
+)
+
+results = client.collection("docling-fsr").query(
+    select(
+        "kind", "page", "text",
+        semantic=fn.semantic_similarity("text", question),
+        keyword=fn.bm25_score(),
+    )
+    # should() scores keyword matches without dropping documents that share no words with the question
+    .filter(should(question, field="text"))
+    .sort(field("semantic") + field("keyword") * KEYWORD_WEIGHT, asc=False)
+    .limit(8)
+)
+```
+
+## Why figures matter
+
+Text chunks alone missed most chart questions. In the example, indexing a record for each figure raised the rate at which the correct page appeared in the top results for chart questions **from 17% to 75%**.
+
+To go further, store the figure crop itself in an [`image()`](/sdk/topk-py/schema#image) field with a `semantic_index()`, so the chart is searchable as an image rather than only through its caption.
+
+## Resources
+
+- [Docling example: RAG with TopK](https://docling-project.github.io/docling/_generated/examples/rag_topk/)
+- [Docling documentation](https://docling-project.github.io/docling/)
+- [True hybrid search](/guides/true-hybrid-search)

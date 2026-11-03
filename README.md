@@ -23,6 +23,10 @@ Using Claude Code, Cursor, Codex, or another coding agent? Install the [TopK ski
 npx skills add topk-io/topk --skill topk
 ```
 
+## Integrations
+
+TopK works with [Docling](https://docs.topk.io/integrations/docling), [Haystack](https://docs.topk.io/integrations/haystack) and [Google ADK](https://docs.topk.io/integrations/google-adk). Maintain a document parser, chunker or agent framework? See [Build a TopK integration](https://docs.topk.io/integrations/build).
+
 ## SDKs
 
 - [Python SDK](./topk-py/) - Python SDK for TopK API

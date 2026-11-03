@@ -160,6 +160,32 @@
         ]
       },
       {
+        "tab": "Integrations",
+        "icon": "blocks",
+        "pages": [
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/index",
+              "integrations/build"
+            ]
+          },
+          {
+            "group": "Document processing",
+            "pages": [
+              "integrations/docling"
+            ]
+          },
+          {
+            "group": "Frameworks",
+            "pages": [
+              "integrations/haystack",
+              "integrations/google-adk"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "CLI",
         "icon": "terminal",
         "pages": [

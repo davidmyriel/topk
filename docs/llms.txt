@@ -42,6 +42,20 @@ Coding agents (Claude Code, Cursor, Codex, and others): install the TopK skill f
 
 - [Migrate from Chroma](https://docs.topk.io/migrate/from-chroma): Move every Chroma collection to TopK with its embeddings, metadata and distance metric, then check that results match before you cut over.
 
+## Integrations
+
+- [Integrations](https://docs.topk.io/integrations): Use TopK from document processing pipelines, RAG frameworks, and agent frameworks: Docling, Haystack, Google ADK, and more.
+- [Build a TopK integration](https://docs.topk.io/integrations/build): For maintainers of document parsers, chunkers, ETL tools, and RAG or agent frameworks: how framework concepts map onto TopK, and what a strong TopK integration looks like.
+
+## Integrations: Document processing
+
+- [Docling](https://docs.topk.io/integrations/docling): Parse complex PDFs with Docling and index text chunks and figures in TopK for hybrid, multi-vector retrieval.
+
+## Integrations: Frameworks
+
+- [Haystack](https://docs.topk.io/integrations/haystack): topk-haystack: a TopK document store and semantic, embedding, BM25, hybrid, and metadata retrievers for Haystack pipelines.
+- [Google ADK](https://docs.topk.io/integrations/google-adk): adk-topk: long-term memory and search toolsets backed by TopK for Google Agent Development Kit agents.
+
 ## CLI
 
 - [CLI](https://docs.topk.io/cli): The command-line interface for TopK.

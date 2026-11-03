@@ -1,0 +1,49 @@
+---
+title: "Google ADK"
+description: "adk-topk: long-term memory and search toolsets backed by TopK for Google Agent Development Kit agents."
+---
+
+[`adk-topk`](https://github.com/topk-io/adk-topk) gives [Google Agent Development Kit](https://google.github.io/adk-docs/) agents memory and document search backed by TopK.
+
+## Install
+
+```bash
+pip install adk-topk
+```
+
+Set `TOPK_API_KEY` and `TOPK_REGION` in your environment ([get an API key](https://console.topk.io/api-key), [list of regions](/regions)).
+
+## Components
+
+| Component | Use it for |
+|---|---|
+| `TopKMemoryService` | An ADK memory service that stores and recalls session memory in TopK |
+| `TopKMemoryToolset` | Tools that let the agent save and search its own memories |
+| `TopKSearchToolset` | Tools that let the agent search a document collection |
+
+## Quick start
+
+```python
+import asyncio
+
+from adk_topk import TopKSearchToolset
+from google.adk.agents import Agent
+
+docs = TopKSearchToolset(collection_name="support_docs")
+asyncio.run(docs.add_texts([
+    "Error E-4021 means the card was declined by the issuing bank.",
+]))
+
+root_agent = Agent(
+    model="gemini-flash-latest",
+    name="support",
+    instruction="Answer questions using the search tools.",
+    tools=[docs],
+)
+```
+
+Text is embedded by TopK on the server, so the agent needs no separate embedding model.
+
+## Resources
+
+- [GitHub: topk-io/adk-topk](https://github.com/topk-io/adk-topk)

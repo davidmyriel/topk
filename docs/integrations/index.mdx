@@ -1,0 +1,44 @@
+---
+title: "Integrations"
+description: "Use TopK from document processing pipelines, RAG frameworks, and agent frameworks: Docling, Haystack, Google ADK, and more."
+icon: "blocks"
+---
+
+TopK plugs into the tools teams already use to parse, chunk, and retrieve complex documents. Every integration below uses the same engine, so each one gets:
+
+- **Server-side embedding.** Add [`semantic_index()`](/guides/semantic-search) to a field and TopK embeds both documents and queries. You don't run an embedding model or keep model versions in sync between ingestion and query time.
+- **Multi-vector retrieval by default.** `semantic_index()` runs on [topk-embed-v1](https://www.topk.io/blog/topk-embed-v1), a late-interaction model that keeps one embedding per token and scores with [MaxSim](/guides/multi-vector-search#maxsim-scoring). Token-level matching holds up on long documents, specific clauses, tables, and identifiers, which are the parts of a parsed PDF that single-vector embeddings tend to blur.
+- **True hybrid search in one query.** A `semantic_index()` field also supports BM25, so semantic similarity, keyword score, metadata filters, and a custom ranking expression all run in [one request](/guides/true-hybrid-search). There's no second keyword index and no client-side fusion.
+- **Visual documents.** An [`image()`](/sdk/topk-py/schema#image) field can carry a `semantic_index()`, so page renders, figures, and charts are searchable next to the text extracted from them.
+- **Object-storage economics.** TopK separates compute from storage, so large document corpora cost a fraction of what memory-resident vector databases charge. See [Architecture](/architecture).
+
+## Document processing
+
+<CardGroup cols={2}>
+  <Card title="Docling" icon="file-text" href="/integrations/docling">
+    Parse PDFs with Docling, chunk with `HybridChunker`, and index text and figures in TopK.
+  </Card>
+</CardGroup>
+
+## RAG and agent frameworks
+
+<CardGroup cols={2}>
+  <Card title="Haystack" icon="layers" href="/integrations/haystack">
+    `topk-haystack`: a document store plus semantic, embedding, BM25, hybrid, and metadata retrievers.
+  </Card>
+  <Card title="Google ADK" icon="bot" href="/integrations/google-adk">
+    `adk-topk`: memory service and search toolsets for Google Agent Development Kit agents.
+  </Card>
+</CardGroup>
+
+## Coding agents
+
+<CardGroup cols={2}>
+  <Card title="TopK agent skill" icon="terminal" href="/agents">
+    Teaches Claude Code, Cursor, and Codex to write correct TopK code: `npx skills add topk-io/topk --skill topk`.
+  </Card>
+</CardGroup>
+
+## Build an integration
+
+Maintain a document parser, chunker, ETL tool, or agent framework? [Build a TopK integration](/integrations/build) explains how your framework's concepts map onto TopK, and how to make your integration more capable than a plain vector-store adapter.

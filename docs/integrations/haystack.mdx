@@ -1,0 +1,67 @@
+---
+title: "Haystack"
+description: "topk-haystack: a TopK document store and semantic, embedding, BM25, hybrid, and metadata retrievers for Haystack pipelines."
+---
+
+[`topk-haystack`](https://github.com/topk-io/topk-haystack) connects TopK to [Haystack](https://haystack.deepset.ai) 2.x pipelines. It's listed in the [Haystack integrations catalog](https://haystack.deepset.ai/integrations/topk).
+
+## Install
+
+```bash
+pip install topk-haystack
+```
+
+Set `TOPK_API_KEY` in your environment ([get an API key](https://console.topk.io/api-key)).
+
+## Components
+
+| Component | Import | Use it for |
+|---|---|---|
+| `TopKDocumentStore` | `haystack_integrations.document_stores.topk` | Writing, filtering, and deleting documents |
+| `TopKSemanticRetriever` | `haystack_integrations.components.topk` | Text queries with server-side embedding (no embedder component) |
+| `TopKEmbeddingRetriever` | `haystack_integrations.components.topk` | Dense vector search with your own embedder |
+| `TopKBM25Retriever` | `haystack_integrations.components.topk` | Keyword search |
+| `TopKHybridRetriever` | `haystack_integrations.components.topk` | Vector and BM25 scores combined in one query |
+| `TopKMetadataRetriever` | `haystack_integrations.components.topk` | Metadata filters only |
+
+`TopKSemanticRetriever` is the shortest path: Haystack pipelines usually need matching document and text embedder components, but with TopK the indexing pipeline is just a `DocumentWriter`.
+
+## Quick start
+
+```python
+from haystack import Document, Pipeline
+from haystack.components.writers import DocumentWriter
+from haystack.utils import Secret
+
+from haystack_integrations.components.topk import TopKSemanticRetriever
+from haystack_integrations.document_stores.topk import TopKDocumentStore
+
+store = TopKDocumentStore(
+    api_key=Secret.from_env_var("TOPK_API_KEY"),
+    region="aws-us-east-1-elastica",
+    collection_name="my-docs",
+)
+
+indexing = Pipeline()
+indexing.add_component("writer", DocumentWriter(document_store=store))
+indexing.run({"writer": {"documents": [
+    Document(content="Rust guarantees memory safety without a garbage collector."),
+    Document(content="Python is known for readable syntax and scientific libraries."),
+]}})
+
+retriever = TopKSemanticRetriever(document_store=store, top_k=2)
+query = Pipeline()
+query.add_component("retriever", retriever)
+result = query.run({"retriever": {"query": "memory safe systems programming"}})
+for doc in result["retriever"]["documents"]:
+    print(f"[{doc.score:.3f}] {doc.content}")
+```
+
+## Multi-tenancy
+
+Pass a `partition` to isolate tenants inside a single collection. See [Multi-tenancy](/concepts#multi-tenancy).
+
+## Resources
+
+- [GitHub: topk-io/topk-haystack](https://github.com/topk-io/topk-haystack)
+- [Haystack integration page](https://haystack.deepset.ai/integrations/topk)

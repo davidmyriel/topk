@@ -1,0 +1,116 @@
+---
+title: "Build a TopK integration"
+description: "For maintainers of document parsers, chunkers, ETL tools, and RAG or agent frameworks: how framework concepts map onto TopK, and what a strong TopK integration looks like."
+---
+
+This page is for people adding TopK support to another project, whether by hand or with a coding agent. It covers how common vector-store interfaces map onto TopK, and the TopK capabilities worth exposing so your integration does more than a generic vector-store adapter.
+
+<Tip>
+  Using a coding agent? Install the TopK skill first so it writes correct TopK code: `npx skills add topk-io/topk --skill topk`.
+</Tip>
+
+## What's different about TopK
+
+Most vector-store adapters assume the framework embeds text before writing and embeds the query before searching. TopK can do both on the server, and that changes the shape of a good integration:
+
+| Typical vector store | TopK |
+|---|---|
+| The framework calls an embedding model at ingestion and query time | A `semantic_index()` field is embedded by TopK. Your adapter sends raw text, or raw images, and a text query. |
+| Single-vector embeddings: one point per chunk | `semantic_index()` is multi-vector ([topk-embed-v1](https://www.topk.io/blog/topk-embed-v1), MaxSim). Long chunks, tables, and exact identifiers keep their signal. |
+| Hybrid search means a second keyword index and client-side fusion (for example RRF) | `semantic_index()` fields also support BM25. One query returns semantic and keyword scores, filters on metadata, and sorts by an expression you write. |
+| Images need a separate multimodal pipeline | `image()` fields accept PIL images or JPEG/PNG bytes, and can carry a `semantic_index()`. |
+| Multi-tenancy by filtering on a tenant field | [Partitions](/concepts#multi-tenancy) isolate tenants in a collection and scale throughput with tenant count. |
+
+Bring-your-own embeddings are also fully supported: [dense](/guides/vector-search), [sparse](/guides/sparse-vector-search) (including SPLADE), and [multi-vector](/guides/multi-vector-search) matrices for models such as ColBERT and ColPali. Expose both paths if your framework has an embeddings abstraction.
+
+## Mapping a vector-store interface
+
+These are the operations most frameworks expect (LangChain `VectorStore`, LlamaIndex `VectorStore`, Haystack `DocumentStore`, chunker "write" hooks, ETL targets) and their TopK equivalents in the [Python SDK](/sdk/topk-py/overview). The [JavaScript SDK](/sdk/topk-js/overview) mirrors them.
+
+| Framework operation | TopK |
+|---|---|
+| Create the index or collection | `client.collections().create(name, schema={...})` |
+| `add_texts` / `add_documents` / `write` | `client.collection(name).upsert([{"_id": ..., "text": ..., **metadata}])` |
+| Similarity search on a text query | `select(score=fn.semantic_similarity("text", query)).sort(field("score"), asc=False).limit(k)` |
+| Keyword or BM25 search | `.filter(match(query, field="text"))` with `fn.bm25_score()` |
+| Hybrid search | Both scores in one `select()`, then sort by e.g. `field("semantic") + field("keyword") * w` |
+| Metadata filter | `.filter(field("source") == "report.pdf")`, combined with `&` and `|` |
+| Get by ID | `client.collection(name).get(ids)` |
+| Delete by ID or by filter | `client.collection(name).delete(ids)` or `.delete(field("doc_id") == "...")` |
+| Namespace or tenant | `client.collection(name, partition_name)` |
+| Read your own writes (tests) | Pass the LSN returned by `upsert()` / `delete()` to `query(..., lsn=lsn)` |
+
+Metadata fields don't need to be declared in the schema: extra fields are stored, returned, and filterable. Declare a field in the schema only when it needs an index.
+
+## Recommended schema for document chunks
+
+```python
+import os
+
+from topk_sdk import Client
+from topk_sdk.schema import text, int, image, semantic_index
+
+client = Client(api_key=os.environ["TOPK_API_KEY"], region=os.environ["TOPK_REGION"])
+
+client.collections().create(
+    "chunks",
+    schema={
+        # Embedded on the server, multi-vector, and BM25-searchable
+        "text": text().required().index(semantic_index()),
+        # Optional: page renders or figure crops, searchable with text queries
+        "image": image().index(semantic_index()),
+        "page": int(),
+    },
+)
+```
+
+A hybrid query over that schema:
+
+```python
+from topk_sdk.query import select, field, fn, should
+
+results = client.collection("chunks").query(
+    select(
+        "text", "page", "source",
+        semantic=fn.semantic_similarity("text", question),
+        keyword=fn.bm25_score(),
+    )
+    .filter(should(question, field="text"))      # keyword scoring without dropping non-matches
+    .filter(field("source") == "annual-report.pdf")
+    .sort(field("semantic") + field("keyword") * 0.1, asc=False)
+    .limit(10)
+)
+```
+
+## Checklist for a strong integration
+
+<Steps>
+  <Step title="Default to server-side embedding">
+    Make the zero-config path work without an embedding model. Let users pass their own embeddings as an option, not a requirement.
+  </Step>
+  <Step title="Expose hybrid search">
+    Offer semantic, keyword, and hybrid modes, with a keyword weight parameter. If your framework already has a hybrid or BM25 flag, wire it to TopK's native BM25 instead of falling back to semantic-only.
+  </Step>
+  <Step title="Keep document structure in metadata">
+    Store page numbers, section headings, element type (text, table, figure), and source IDs as fields. They become filterable at no cost and make citations possible.
+  </Step>
+  <Step title="Support images where your framework has them">
+    If your parser produces page images or figure crops, write them to an `image()` field. This is the main reason document-processing users pick TopK.
+  </Step>
+  <Step title="Use the LSN in tests">
+    Pass the LSN from writes into the queries that follow, so integration tests don't race indexing.
+  </Step>
+  <Step title="Read credentials from the environment">
+    Use `TOPK_API_KEY` and `TOPK_REGION`, matching the TopK SDKs, CLI, and existing integrations.
+  </Step>
+</Steps>
+
+## Reference implementations
+
+- [`topk-haystack`](https://github.com/topk-io/topk-haystack): a full document store and five retrievers.
+- [`adk-topk`](https://github.com/topk-io/adk-topk): agent memory and search toolsets.
+- [Docling: RAG with TopK](https://docling-project.github.io/docling/_generated/examples/rag_topk/): a document-processing pipeline with figure records and hybrid search.
+
+## Get listed
+
+Once your integration ships, open a pull request against [topk-io/topk](https://github.com/topk-io/topk) that adds a page under `docs/integrations/`, or [contact us](https://topk.io/contact). We list integrations here, link to your project, and are glad to co-write an example or blog post.

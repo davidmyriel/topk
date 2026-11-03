@@ -158,6 +158,19 @@ function buildSections(): Section[] {
     }
   }
 
+  // Integrations tab
+  const integrationsTab = docs.navigation.tabs.find((t) => t.tab === "Integrations");
+  if (integrationsTab) {
+    for (const group of normalizeTabPages(integrationsTab.pages)) {
+      if (!group.pages.length) continue;
+      const heading = group.group ?? "Integrations";
+      sections.push({
+        heading: heading === "Integrations" ? heading : `Integrations: ${heading}`,
+        entries: group.pages.map((slug): Entry => ({ type: "slug", slug })),
+      });
+    }
+  }
+
   // CLI
   const cliTab = docs.navigation.tabs.find((t) => t.tab === "CLI");
   if (cliTab) {
